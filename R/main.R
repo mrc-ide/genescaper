@@ -147,5 +147,8 @@ run_mcmc <- function(project, ...) {
   df_params <- drjacoby::define_params(name = "log_lambda", min = -Inf, max = Inf,
                                        name = "u", min = 0, max = 1)
   
+  # source C++ likelihood and prior functions
+  #Rcpp::sourceCpp("ignore/Cpp scripts/gp_model2.cpp")
+  
   return(project)
 }

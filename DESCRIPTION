@@ -27,9 +27,8 @@ Imports:
     Rcpp,
     rlang,
     drjacoby
-Remotes: mrc-ide/drjacoby/v1.5.2
+Remotes: mrc-ide/drjacoby@v1.5.2
 SystemRequirements: C++11
 Suggests: 
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
-
