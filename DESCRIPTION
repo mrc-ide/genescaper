@@ -22,6 +22,11 @@ RoxygenNote: 7.1.1
 LinkingTo: 
     Rcpp
 Imports: 
-    Rcpp
+    magrittr,
+    dplyr,
+    Rcpp,
+    rlang
 SystemRequirements: C++11
-
+Suggests: 
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
