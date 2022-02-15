@@ -15,7 +15,7 @@ Description: Inputs data consisting of allele frequencies at sampling sites
     to detect outliers, which may represent sites that are more/less connected
     than we would expect by chance.
 BugReports: https://github.com/mrc-ide/genescaper/issues
-License: GPL-3
+License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
 RoxygenNote: 7.1.1
