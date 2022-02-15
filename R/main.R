@@ -66,3 +66,86 @@ bind_data <- function(project, site_data, genetic_data) {
   
   return(project)
 }
+
+#------------------------------------------------
+#' @title Define parameters of the spatial correlation model
+#'
+#' @description TODO
+#'
+#' @param project a genescaper project, as produced by the
+#'   \code{genescaper_project()} function.
+#' @param alpha_0 TODO
+#' @param beta_0 TODO
+#' @param phi_0 TODO
+#' @param gamma_0 TODO
+#'
+#' @export
+
+define_model <- function(project, alpha_0 = 1.0, beta_0 = 1.0, phi_0 = 0.0, gamma_0 = 0.1) {
+  
+  # check inputs
+  assert_class(project, "genescaper_project")
+  assert_single_pos(alpha_0, zero_allowed = FALSE)
+  assert_single_pos(beta_0, zero_allowed = FALSE)
+  assert_single_numeric(phi_0)
+  assert_single_pos(gamma_0, zero_allowed = FALSE)
+  
+  # store within project
+  project$model$parameters <- list(alpha_0 = alpha_0,
+                                   beta_0 = beta_0,
+                                   phi_0 = phi_0,
+                                   gamma_0 = gamma_0)
+  
+  return(project)
+}
+
+#------------------------------------------------
+#' @title Run MCMC
+#'
+#' @description TODO
+#'
+#' @param project a genescaper project, as produced by the
+#'   \code{genescaper_project()} function.
+#' @param ... additional parameters that will be passed to
+#'   \code{drjacoby::run_mcmc()}.
+#'
+#' @export
+
+run_mcmc <- function(project, ...) {
+  
+  # check inputs
+  assert_class(project, "genescaper_project")
+  
+  # check that both data and model have been defined
+  assert_non_null(project$dat$raw)
+  assert_non_null(project$model$parameters)
+  
+  # get adjusted allele frequencies by applying stick breaking correction. For
+  # each allele, p_stick is calculated by dividing the allele frequency by the
+  # amount of unit interval that remains once previous frequencies have been
+  # taken into account. This creates (J - 1) ostensibly independent frequencies,
+  # where J is the number of alleles. The final p_stick always equals 1 and so
+  # this allele can be dropped (in other words, there are J - 1 degrees of
+  # freedom and so we are reducing from J dependent frequencies to J-1
+  # independent frequencies).
+  # z values are calculated as logit(p_stick). Finally, z values are split into
+  # a list over all locus&allele combos. Each combo has an independent mean and
+  # variance under the model and so we can treat these as equivalent replicates.
+  z_list <- project$data$raw$genetic_data %>%
+    dplyr::group_by(.data$site_ID, .data$locus) %>%
+    dplyr::summarise(J = length(.data$allele),
+                     allele = .data$allele[-.data$J],
+                     stick_remaining = 1 - cumsum(.data$freq[-.data$J]) + .data$freq[-.data$J],
+                     p_stick = .data$freq[-.data$J] / .data$stick_remaining,
+                     z = log(.data$p_stick) - log(1 - .data$p_stick)) %>%
+    dplyr::select(.data$locus, .data$allele, .data$z) %>%
+    dplyr::group_by(.data$locus, .data$allele) %>%
+    dplyr::group_split() %>%
+    lapply(function (x) x$z)
+  
+  # define parameters dataframe
+  df_params <- drjacoby::define_params(name = "log_lambda", min = -Inf, max = Inf,
+                                       name = "u", min = 0, max = 1)
+  
+  return(project)
+}
