@@ -1,0 +1,27 @@
+Package: genescaper
+Type: Package
+Title: Allele frequency mapping and outlier detection
+Version: 0.1.0
+Authors@R: as.person(c(
+    "Bob Verity <r.verity@imperial.ac.uk> [aut, cre]", 
+    "Keith Fraser <keith.fraser@imperial.ac.uk> [aut]"
+  ))
+Description: Inputs data consisting of allele frequencies at sampling sites
+    along with their latitude/longitude values. Fits a model of smoothly
+    varying allele frequencies in space (a Gaussian Random Field) via Bayesian
+    MCMC. Uses the fitted model to predict allele frequencies at any given
+    point in space, and also to generate a null distribution for pairwise
+    genetic distances between sites. This null distribution can then be used
+    to detect outliers, which may represent sites that are more/less connected
+    than we would expect by chance.
+BugReports: https://github.com/mrc-ide/genescaper/issues
+License: GPL-3
+Encoding: UTF-8
+LazyData: true
+RoxygenNote: 7.1.1
+LinkingTo: 
+    Rcpp
+Imports: 
+    Rcpp
+SystemRequirements: C++11
+
