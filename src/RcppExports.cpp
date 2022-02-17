@@ -21,9 +21,19 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// foo_cpp
+void foo_cpp();
+RcppExport SEXP _genescaper_foo_cpp() {
+BEGIN_RCPP
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    foo_cpp();
+    return R_NilValue;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_genescaper_square_cpp", (DL_FUNC) &_genescaper_square_cpp, 1},
+    {"_genescaper_foo_cpp", (DL_FUNC) &_genescaper_foo_cpp, 0},
     {NULL, NULL, 0}
 };
 

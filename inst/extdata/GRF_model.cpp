@@ -2,6 +2,18 @@
 using namespace std;
 
 //------------------------------------------------
+// density of gamma(shape,rate) distribution
+double dgamma1(double x, double shape, double rate, bool return_log) {
+  return(R::dgamma(x, shape, 1.0 / rate, return_log));
+}
+
+//------------------------------------------------
+// density of beta(shape1,shape2) distribution
+double dbeta1(double x, double shape1, double shape2, bool return_log) {
+  return R::dbeta(x, shape1, shape2, return_log);
+}
+
+//------------------------------------------------
 // calculate Cholesky decomposition of positive definite matrix sigma
 void cholesky(vector<vector<double>> &chol, const vector<vector<double>> &sigma) {
   
@@ -112,26 +124,29 @@ SEXP loglike(Rcpp::NumericVector params, Rcpp::List data, Rcpp::List misc) {
   double log_lambda = params["log_lambda"];
   double lambda = std::exp(log_lambda);
   double inv_lambda = 1.0 / lambda;
-  double u = params["u"];
+  double nu = params["nu"];
   
   // get fixed parameters
-  double phi_0 = misc["phi_0"];
-  double gamma_0 = misc["gamma_0"];
-  double alpha_0 = misc["alpha_0"];
-  double beta_0 = misc["beta_0"];
+  double mu_mean = misc["mu_mean"];
+  double mu_scale = misc["mu_scale"];
+  double sigsq_mean = misc["sigsq_mean"];
+  double sigsq_var = misc["sigsq_var"];
+  
+  // reparameterise for convenience
+  double phi_0 = mu_mean;
+  double gamma_0 = 1.0 / mu_scale;
+  double alpha_0 = sigsq_mean * sigsq_mean / sigsq_var + 2.0;
+  double beta_0 = sigsq_mean * (alpha_0 - 1.0);
   
   // get distance matrix between all sites
   Rcpp::NumericMatrix site_dist = misc["site_dist"];
-  
-  // get misc values
   int n_site = misc["n_site"];
-  int n_combos = misc["n_combos"];
   
   // create correlation matrix
   vector<vector<double>> R(n_site, vector<double>(n_site, 1.0));
   for (int i = 0; i < (n_site - 1); ++i) {
     for (int j = (i + 1); j < n_site; ++j) {
-      R[i][j] = (1 - u) * exp(-site_dist(i, j) * inv_lambda);
+      R[i][j] = (1 - nu) * exp(-site_dist(i, j) * inv_lambda);
       R[j][i] = R[i][j];
     }
   }
@@ -147,7 +162,7 @@ SEXP loglike(Rcpp::NumericVector params, Rcpp::List data, Rcpp::List misc) {
   
   // sum loglikelihood over all locus&allele combos
   double ret = 0.0;
-  for (int combo_i = 0; combo_i < n_combos; ++combo_i) {
+  for (int combo_i = 0; combo_i < data.size(); ++combo_i) {
     
     // get data
     vector<double> z = Rcpp::as< vector<double> >(data[combo_i]);
@@ -180,9 +195,20 @@ SEXP logprior(Rcpp::NumericVector params, Rcpp::List misc) {
   // get parameters
   double log_lambda = params["log_lambda"];
   double lambda = exp(log_lambda);
+  double nu = params["nu"];
+  
+  double lambda_mean = misc["lambda_mean"];
+  double lambda_var = misc["lambda_var"];
+  double nu_shape1 = misc["nu_shape1"];
+  double nu_shape2 = misc["nu_shape2"];
+  
+  // reparameterise for convenience
+  double lambda_shape = lambda_mean * lambda_mean / lambda_var;
+  double lambda_rate = lambda_mean / lambda_var;
   
   // calculate logprior
-  double ret = -0.01 * lambda;
+  double ret = dgamma1(lambda, lambda_shape, lambda_rate, true) +
+    dbeta1(nu, nu_shape1, nu_shape2, true);
   
   // add adjustment factors for transformations
   ret += log_lambda;

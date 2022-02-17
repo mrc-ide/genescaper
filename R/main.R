@@ -74,27 +74,40 @@ bind_data <- function(project, site_data, genetic_data) {
 #'
 #' @param project a genescaper project, as produced by the
 #'   \code{genescaper_project()} function.
-#' @param alpha_0 TODO
-#' @param beta_0 TODO
-#' @param phi_0 TODO
-#' @param gamma_0 TODO
+#' @param mu_mean TODO
+#' @param mu_scale TODO
+#' @param sigsq_mean TODO
+#' @param sigsq_var TODO
+#' @param lambda_mean TODO
+#' @param lambda_var TODO
+#' @param nu_shape1 TODO
+#' @param nu_shape2 TODO
 #'
 #' @export
 
-define_model <- function(project, alpha_0 = 1.0, beta_0 = 1.0, phi_0 = 0.0, gamma_0 = 0.1) {
+define_model <- function(project, mu_mean = 0.0, mu_scale = 1.0, sigsq_mean = 1.0, sigsq_var = 1.0,
+                         lambda_mean = 5.0, lambda_var = 10.0, nu_shape1 = 1.0, nu_shape2 = 1.0) {
   
   # check inputs
   assert_class(project, "genescaper_project")
-  assert_single_pos(alpha_0, zero_allowed = FALSE)
-  assert_single_pos(beta_0, zero_allowed = FALSE)
-  assert_single_numeric(phi_0)
-  assert_single_pos(gamma_0, zero_allowed = FALSE)
+  assert_single_numeric(mu_mean)
+  assert_single_pos(mu_scale, zero_allowed = FALSE)
+  assert_single_pos(sigsq_mean, zero_allowed = FALSE)
+  assert_single_pos(sigsq_var, zero_allowed = FALSE)
+  assert_single_pos(lambda_mean, zero_allowed = FALSE)
+  assert_single_pos(lambda_var, zero_allowed = FALSE)
+  assert_single_pos(nu_shape1, zero_allowed = FALSE)
+  assert_single_pos(nu_shape2, zero_allowed = FALSE)
   
   # store within project
-  project$model$parameters <- list(alpha_0 = alpha_0,
-                                   beta_0 = beta_0,
-                                   phi_0 = phi_0,
-                                   gamma_0 = gamma_0)
+  project$model$parameters <- list(mu_mean = mu_mean,
+                                   mu_scale = mu_scale,
+                                   sigsq_mean = sigsq_mean,
+                                   sigsq_var = sigsq_var,
+                                   lambda_mean = lambda_mean,
+                                   lambda_var = lambda_var,
+                                   nu_shape1 = nu_shape1,
+                                   nu_shape2 = nu_shape2)
   
   return(project)
 }
@@ -120,6 +133,11 @@ run_mcmc <- function(project, ...) {
   assert_non_null(project$dat$raw)
   assert_non_null(project$model$parameters)
   
+  # get distance between all sites
+  site_dist <- get_GC_distance(project$data$raw$site_data$longitude,
+                               project$data$raw$site_data$latitude) %>%
+    as.matrix()
+  
   # get adjusted allele frequencies by applying stick breaking correction. For
   # each allele, p_stick is calculated by dividing the allele frequency by the
   # amount of unit interval that remains once previous frequencies have been
@@ -138,17 +156,109 @@ run_mcmc <- function(project, ...) {
                      stick_remaining = 1 - cumsum(.data$freq[-.data$J]) + .data$freq[-.data$J],
                      p_stick = .data$freq[-.data$J] / .data$stick_remaining,
                      z = log(.data$p_stick) - log(1 - .data$p_stick)) %>%
+    dplyr::ungroup() %>%
     dplyr::select(.data$locus, .data$allele, .data$z) %>%
     dplyr::group_by(.data$locus, .data$allele) %>%
     dplyr::group_split() %>%
     lapply(function (x) x$z)
+  names(z_list) <- seq_along(z_list)
   
   # define parameters dataframe
   df_params <- drjacoby::define_params(name = "log_lambda", min = -Inf, max = Inf,
-                                       name = "u", min = 0, max = 1)
+                                       name = "nu", min = 0, max = 1)
   
   # source C++ likelihood and prior functions
-  #Rcpp::sourceCpp("ignore/Cpp scripts/gp_model2.cpp")
+  Rcpp::sourceCpp(system.file("extdata/GRF_model.cpp", package = 'genescaper', mustWork = TRUE))
+  
+  # run MCMC
+  mcmc <- drjacoby::run_mcmc(data = z_list,
+                             df_params = df_params,
+                             misc = append(project$model$parameters,
+                                           list(site_dist = site_dist,
+                                                n_site = nrow(site_dist))),
+                             loglike = "loglike",
+                             logprior = "logprior",
+                             ...)
+  
+  # replace log_lambda with lambda in output
+  mcmc$output <- mcmc$output %>%
+    dplyr::rename(lambda = .data$log_lambda) %>%
+    dplyr::mutate(lambda = exp(.data$lambda))
+  
+  # add to project
+  project$model$MCMC <- mcmc
+  
+  return(project)
+}
+
+#------------------------------------------------
+#' @title Create map composed of hexagonal tiles
+#'
+#' @description TODO
+#'
+#' @param project a genescaper project, as produced by the
+#'   \code{genescaper_project()} function.
+#' @param hex_width width of hexagons.
+#' @param border_coords dataframe giving coordinates (longitude, latitude) of a
+#'   polygon within which the map is defined. If null then this is generated
+#'   automatically from the convex hull of the sample site locations.
+#'
+#' @import sf
+#' @importFrom grDevices chull
+#' @export
+
+create_hex_grid <- function(project, hex_width = NULL, border_coords = NULL) {
+  
+  # check inputs
+  assert_class(project, "genescaper_project")
+  if (!is.null(hex_width)) {
+    assert_single_pos(hex_width, zero_allowed = FALSE)
+  }
+  if (!is.null(border_coords)) {
+    assert_dataframe(border_coords)
+    assert_in(c("long", "lat"), names(border_coords))
+    assert_vector_numeric(border_coords$longitude)
+    assert_vector_numeric(border_coords$latitude)
+    assert_bounded(border_coords$longitude, left = -180, right = 180)
+    assert_bounded(border_coords$latitude, left = -90, right = 90)
+  }
+  
+  message("Creating hex map")
+  
+  # calculate default hex size from data
+  if (is.null(hex_width)) {
+    diff_longitude <- diff(range(project$data$raw$site_data$longitude))
+    diff_latitude <- diff(range(project$data$raw$site_data$latitude))
+    hex_width <- min(diff_longitude, diff_latitude) / 20
+    message(sprintf("hex width chosen automatically: %s", signif(hex_width, 3)))
+  }
+  
+  # get border_coords from convex hull of data
+  if (is.null(border_coords)) {
+    data_coords <- project$data$raw$site_data %>%
+      dplyr::select(.data$longitude, .data$latitude)
+    ch_data <- chull(data_coords)
+    border_coords <- data_coords[c(ch_data, ch_data[1]),]
+  }
+  
+  # get convex hull into sf polygon format
+  bounding_poly <- sf::st_sfc(sf::st_polygon(list(as.matrix(border_coords))))
+  
+  # make sf hex grid from poly
+  hex_polys <- sf::st_make_grid(bounding_poly, cellsize = hex_width, square = FALSE)
+  nhex <- length(hex_polys)
+  
+  # get hex centroid points
+  hex_pts <- sf::st_centroid(hex_polys)
+  hex_pts_df <- as.data.frame(t(mapply(as.vector, hex_pts)))
+  names(hex_pts_df) <- c("long", "lat")
+  
+  message(sprintf("%s hexagons created", nhex))
+  
+  # add to project
+  project$maps <- list(grid = list(parameters = list(hex_width = hex_width),
+                                   centroids = hex_pts_df,
+                                   polygons = hex_polys))
   
   return(project)
 }

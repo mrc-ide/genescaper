@@ -5,3 +5,7 @@ square_cpp <- function(args) {
     .Call(`_genescaper_square_cpp`, args)
 }
 
+foo_cpp <- function() {
+    invisible(.Call(`_genescaper_foo_cpp`))
+}
+

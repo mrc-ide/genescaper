@@ -5,3 +5,7 @@
 // square a vector of values
 // [[Rcpp::export]]
 Rcpp::List square_cpp(Rcpp::List args);
+
+//------------------------------------------------
+// [[Rcpp::export]]
+void foo_cpp();

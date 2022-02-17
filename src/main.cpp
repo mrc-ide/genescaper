@@ -21,3 +21,8 @@ Rcpp::List square_cpp(Rcpp::List args) {
   Rcpp::List ret = Rcpp::List::create(Rcpp::Named("x_squared") = x);
   return ret;
 }
+
+//------------------------------------------------
+void foo_cpp() {
+  Rcpp::Rcout << "foo\n";
+}

@@ -4,19 +4,37 @@
 \alias{define_model}
 \title{Define parameters of the spatial correlation model}
 \usage{
-define_model(project, alpha_0 = 1, beta_0 = 1, phi_0 = 0, gamma_0 = 0.1)
+define_model(
+  project,
+  mu_mean = 0,
+  mu_scale = 1,
+  sigsq_mean = 1,
+  sigsq_var = 1,
+  lambda_mean = 5,
+  lambda_var = 10,
+  nu_shape1 = 1,
+  nu_shape2 = 1
+)
 }
 \arguments{
 \item{project}{a genescaper project, as produced by the
 \code{genescaper_project()} function.}
 
-\item{alpha_0}{TODO}
+\item{mu_mean}{TODO}
 
-\item{beta_0}{TODO}
+\item{mu_scale}{TODO}
 
-\item{phi_0}{TODO}
+\item{sigsq_mean}{TODO}
 
-\item{gamma_0}{TODO}
+\item{sigsq_var}{TODO}
+
+\item{lambda_mean}{TODO}
+
+\item{lambda_var}{TODO}
+
+\item{nu_shape1}{TODO}
+
+\item{nu_shape2}{TODO}
 }
 \description{
 TODO
