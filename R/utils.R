@@ -106,3 +106,49 @@ lonlat_to_bearing <- function(origin_lon, origin_lat, dest_lon, dest_lat) {
   return(ret)
 }
 
+#------------------------------------------------
+# Transform frequencies (in interval [0,1]) to continuous z values (in interval
+# [-Inf, Inf])
+#' @noRd
+transform_p_to_z <- function(genetic_data) {
+  
+  # check inputs
+  assert_dataframe(genetic_data)
+  assert_in(c("site_ID", "locus", "allele", "freq"), names(genetic_data))
+  
+  # get adjusted allele frequencies by applying stick breaking correction. For
+  # each allele, p_stick is calculated by dividing the allele frequency by the
+  # amount of unit interval that remains once previous frequencies have been
+  # taken into account. This creates (J - 1) ostensibly independent frequencies,
+  # where J is the number of alleles. The final p_stick always equals 1 and so
+  # this allele can be dropped. Iin other words, there are J - 1 degrees of
+  # freedom and so we are reducing from J dependent frequencies to J-1
+  # independent frequencies. z values are then calculated as logit(p_stick).
+  ret <- genetic_data %>%
+    dplyr::group_by(.data$site_ID, .data$locus) %>%
+    dplyr::summarise(J = length(.data$allele),
+                     allele = .data$allele[-.data$J],
+                     stick_remaining = 1 - cumsum(.data$freq[-.data$J]) + .data$freq[-.data$J],
+                     p_stick = .data$freq[-.data$J] / .data$stick_remaining,
+                     z = log(.data$p_stick) - log(1 - .data$p_stick)) %>%
+    dplyr::ungroup() %>%
+    dplyr::select(-.data$J, -.data$stick_remaining, -.data$p_stick)
+  
+  return(ret)
+}
+
+#------------------------------------------------
+# update progress bar
+# pb_list = list of progress bar objects
+# name = name of this progress bar
+# i = new value of bar
+# max_i = max value of bar (close when reach this value)
+# close = whether to close when reach end
+#' @importFrom utils setTxtProgressBar
+#' @noRd
+update_progress <- function(pb_list, name, i, max_i, close = TRUE) {
+  setTxtProgressBar(pb_list[[name]], i)
+  if (i == max_i & close) {
+    close(pb_list[[name]])
+  }
+}

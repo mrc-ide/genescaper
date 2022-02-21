@@ -138,25 +138,11 @@ run_mcmc <- function(project, ...) {
                                project$data$raw$site_data$latitude) %>%
     as.matrix()
   
-  # get adjusted allele frequencies by applying stick breaking correction. For
-  # each allele, p_stick is calculated by dividing the allele frequency by the
-  # amount of unit interval that remains once previous frequencies have been
-  # taken into account. This creates (J - 1) ostensibly independent frequencies,
-  # where J is the number of alleles. The final p_stick always equals 1 and so
-  # this allele can be dropped (in other words, there are J - 1 degrees of
-  # freedom and so we are reducing from J dependent frequencies to J-1
-  # independent frequencies).
-  # z values are calculated as logit(p_stick). Finally, z values are split into
-  # a list over all locus&allele combos. Each combo has an independent mean and
-  # variance under the model and so we can treat these as equivalent replicates.
+  # Transform allele frequencies to z values. These are split into a list over
+  # all locus&allele combos. Each combo has an independent mean and variance
+  # under the model and so we can treat these as equivalent replicates.
   z_list <- project$data$raw$genetic_data %>%
-    dplyr::group_by(.data$site_ID, .data$locus) %>%
-    dplyr::summarise(J = length(.data$allele),
-                     allele = .data$allele[-.data$J],
-                     stick_remaining = 1 - cumsum(.data$freq[-.data$J]) + .data$freq[-.data$J],
-                     p_stick = .data$freq[-.data$J] / .data$stick_remaining,
-                     z = log(.data$p_stick) - log(1 - .data$p_stick)) %>%
-    dplyr::ungroup() %>%
+    transform_p_to_z() %>%
     dplyr::select(.data$locus, .data$allele, .data$z) %>%
     dplyr::group_by(.data$locus, .data$allele) %>%
     dplyr::group_split() %>%
@@ -216,7 +202,7 @@ create_hex_grid <- function(project, hex_width = NULL, border_coords = NULL) {
   }
   if (!is.null(border_coords)) {
     assert_dataframe(border_coords)
-    assert_in(c("long", "lat"), names(border_coords))
+    assert_in(c("longitude", "latitude"), names(border_coords))
     assert_vector_numeric(border_coords$longitude)
     assert_vector_numeric(border_coords$latitude)
     assert_bounded(border_coords$longitude, left = -180, right = 180)
@@ -251,7 +237,7 @@ create_hex_grid <- function(project, hex_width = NULL, border_coords = NULL) {
   # get hex centroid points
   hex_pts <- sf::st_centroid(hex_polys)
   hex_pts_df <- as.data.frame(t(mapply(as.vector, hex_pts)))
-  names(hex_pts_df) <- c("long", "lat")
+  names(hex_pts_df) <- c("longitude", "latitude")
   
   message(sprintf("%s hexagons created", nhex))
   
@@ -259,6 +245,132 @@ create_hex_grid <- function(project, hex_width = NULL, border_coords = NULL) {
   project$maps <- list(grid = list(parameters = list(hex_width = hex_width),
                                    centroids = hex_pts_df,
                                    polygons = hex_polys))
+  
+  return(project)
+}
+
+#------------------------------------------------
+#' @title TODO
+#'
+#' @description TODO
+#'
+#' @param project a genescaper project, as produced by the
+#'   \code{genescaper_project()} function.
+#' @param loci TODO
+#' @param reps TODO
+#' @param inner_reps TODO
+#' @param quantiles TODO
+#' @param exceedance TODO
+#' @param pb_markdown TODO
+#'
+#' @importFrom utils txtProgressBar
+#' @importFrom stats quantile sd
+#' @export
+
+predict_map <- function(project, loci, reps = 2, inner_reps = 10,
+                        quantiles = c(0.025, 0.5, 0.975), exceedance = NULL,
+                        pb_markdown = FALSE) {
+  
+  # check inputs
+  assert_class(project, "genescaper_project")
+  assert_vector_pos_int(loci, zero_allowed = FALSE)
+  assert_single_pos_int(reps, zero_allowed = FALSE)
+  assert_single_pos_int(inner_reps, zero_allowed = FALSE)
+  if (!is.null(quantiles)) {
+    assert_vector_bounded(quantiles)
+  }
+  if (!is.null(exceedance)) {
+    assert_vector_bounded(exceedance)
+  }
+  assert_single_logical(pb_markdown)
+  
+  # sample parameters from posterior
+  mcmc_sample <- project$model$MCMC$output %>%
+    dplyr::filter(.data$phase == "sampling") %>%
+    dplyr::select(.data$lambda, .data$nu) %>%
+    dplyr::sample_n(reps) %>%
+    as.list()
+  
+  # transform frequencies to continuous scale
+  data_df <- project$data$raw$genetic_data %>%
+    dplyr::filter(.data$locus %in% loci) %>%
+    transform_p_to_z()
+  
+  # get z values split by locus and allele
+  data_list <- lapply(split(data_df, data_df$locus, drop = TRUE),
+                      function(x) split(x[["z"]], x[['allele']], drop = TRUE))
+  
+  # get distance between sampling sites
+  site_coords <- project$data$raw$site_data %>%
+    dplyr::select(.data$longitude, .data$latitude)
+  dist_11 <- get_GC_distance(site_coords$longitude, site_coords$latitude) %>%
+    as.matrix()
+  
+  # get distance between prediction sites
+  grid_coords <- project$maps$grid$centroids
+  dist_22 <- get_GC_distance(grid_coords$longitude, grid_coords$latitude) %>%
+    as.matrix()
+  
+  # get distance between sampling sites and prediction sites
+  dist_12 <- apply(grid_coords, 1, function(y) {
+    lonlat_to_bearing(site_coords$longitude, site_coords$latitude, y[1], y[2])$gc_dist
+  })
+  
+  # create function list
+  args_functions <- list(update_progress = update_progress)
+  
+  # create progress bars
+  pb <- txtProgressBar(0, reps, initial = NA, style = 3)
+  args_progress <- list(pb = pb)
+  
+  # create misc list
+  args_misc <- list(pb_markdown = pb_markdown)
+  
+  # initialise list for storing results
+  project$maps$predictions <- replicate(length(loci), NULL)
+  names(project$maps$predictions) <- sprintf("locus_%s", loci)
+  
+  # loop through loci
+  for (i in seq_along(loci)) {
+    message(sprintf("locus %s of %s", i, length(loci)))
+    
+    # draw from predictive distribution via efficient C++ function
+    output_raw <- predict_map_cpp(data_list[[i]], mcmc_sample, dist_11, dist_12,
+                                  dist_22, project$model$parameters, inner_reps,
+                                  args_progress, args_functions, args_misc)
+    
+    # get raw output into array
+    sim_array <- mapply(function(x) {
+      matrix(unlist(x), ncol = length(x))
+    }, output_raw$ret, SIMPLIFY = "array")
+    
+    # get mean and standard deviation over sims
+    project$maps$predictions[[i]]$mean <-  apply(sim_array, c(1, 2), mean)
+    project$maps$predictions[[i]]$sd <-  apply(sim_array, c(1, 2), sd)
+    
+    # get quantiles
+    if (!is.null(quantiles)) {
+      if (length(quantiles) == 1) {
+        sim_quants <- apply(sim_array, c(1, 2), quantile, probs = quantiles) %>%
+          list()
+      } else {
+        sim_quants <- apply(sim_array, c(1, 2), quantile, probs = quantiles) %>%
+          purrr::array_tree(margin = 1)
+      }
+      names(sim_quants) <- sprintf("%s%%", round(quantiles * 100, digits = 1))
+      project$maps$predictions[[i]]$quantiles <-  sim_quants
+    }
+    
+    # get exceedance
+    if (!is.null(exceedance)) {
+      sim_exceedance <- mapply(function(x) {
+        apply(sim_array > x, c(1, 2), mean)
+      }, exceedance, SIMPLIFY = FALSE)
+      names(sim_exceedance) <- sprintf("%s%%", round(exceedance * 100, digits = 1))
+      project$maps$predictions[[i]]$exceedance <-  sim_exceedance
+    }
+    
+  }  # end loop over loci
   
   return(project)
 }

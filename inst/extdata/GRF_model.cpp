@@ -146,7 +146,8 @@ SEXP loglike(Rcpp::NumericVector params, Rcpp::List data, Rcpp::List misc) {
   vector<vector<double>> R(n_site, vector<double>(n_site, 1.0));
   for (int i = 0; i < (n_site - 1); ++i) {
     for (int j = (i + 1); j < n_site; ++j) {
-      R[i][j] = (1 - nu) * exp(-site_dist(i, j) * inv_lambda);
+      double d = site_dist(i, j);
+      R[i][j] = (1 - nu) * exp(-d * inv_lambda);
       R[j][i] = R[i][j];
     }
   }
@@ -172,7 +173,7 @@ SEXP loglike(Rcpp::NumericVector params, Rcpp::List data, Rcpp::List misc) {
     double R_inv_xsq = 0.0;
     for (int i = 0; i < n_site; ++i) {
       for (int j = 0; j < n_site; ++j) {
-        R_inv_xsum += z[j] * R_inv[i][j];
+        R_inv_xsum += z[i] * R_inv[i][j];
         R_inv_xsq += z[i] * z[j] * R_inv[i][j];
       }
     }

@@ -2,10 +2,9 @@
 #include <vector>
 
 //------------------------------------------------
-// square a vector of values
 // [[Rcpp::export]]
-Rcpp::List square_cpp(Rcpp::List args);
-
-//------------------------------------------------
-// [[Rcpp::export]]
-void foo_cpp();
+Rcpp::List predict_map_cpp(Rcpp::List data_list, Rcpp::List mcmc_sample,
+                           Rcpp::NumericMatrix dist_11, Rcpp::NumericMatrix dist_12,
+                           Rcpp::NumericMatrix dist_22, Rcpp::List params,
+                           int inner_reps, Rcpp::List args_progress,
+                           Rcpp::List args_functions, Rcpp::List args_misc);

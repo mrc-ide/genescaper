@@ -28,7 +28,8 @@ Imports:
     rlang,
     drjacoby,
     sf,
-    ggplot2
+    ggplot2,
+    purrr
 Remotes: mrc-ide/drjacoby@v1.5.2
 SystemRequirements: C++11
 Suggests: 

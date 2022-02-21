@@ -10,30 +10,29 @@ Rcpp::Rostream<true>&  Rcpp::Rcout = Rcpp::Rcpp_cout_get();
 Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
-// square_cpp
-Rcpp::List square_cpp(Rcpp::List args);
-RcppExport SEXP _genescaper_square_cpp(SEXP argsSEXP) {
+// predict_map_cpp
+Rcpp::List predict_map_cpp(Rcpp::List data_list, Rcpp::List mcmc_sample, Rcpp::NumericMatrix dist_11, Rcpp::NumericMatrix dist_12, Rcpp::NumericMatrix dist_22, Rcpp::List params, int inner_reps, Rcpp::List args_progress, Rcpp::List args_functions, Rcpp::List args_misc);
+RcppExport SEXP _genescaper_predict_map_cpp(SEXP data_listSEXP, SEXP mcmc_sampleSEXP, SEXP dist_11SEXP, SEXP dist_12SEXP, SEXP dist_22SEXP, SEXP paramsSEXP, SEXP inner_repsSEXP, SEXP args_progressSEXP, SEXP args_functionsSEXP, SEXP args_miscSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
-    Rcpp::traits::input_parameter< Rcpp::List >::type args(argsSEXP);
-    rcpp_result_gen = Rcpp::wrap(square_cpp(args));
+    Rcpp::traits::input_parameter< Rcpp::List >::type data_list(data_listSEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type mcmc_sample(mcmc_sampleSEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericMatrix >::type dist_11(dist_11SEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericMatrix >::type dist_12(dist_12SEXP);
+    Rcpp::traits::input_parameter< Rcpp::NumericMatrix >::type dist_22(dist_22SEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type params(paramsSEXP);
+    Rcpp::traits::input_parameter< int >::type inner_reps(inner_repsSEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type args_progress(args_progressSEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type args_functions(args_functionsSEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type args_misc(args_miscSEXP);
+    rcpp_result_gen = Rcpp::wrap(predict_map_cpp(data_list, mcmc_sample, dist_11, dist_12, dist_22, params, inner_reps, args_progress, args_functions, args_misc));
     return rcpp_result_gen;
-END_RCPP
-}
-// foo_cpp
-void foo_cpp();
-RcppExport SEXP _genescaper_foo_cpp() {
-BEGIN_RCPP
-    Rcpp::RNGScope rcpp_rngScope_gen;
-    foo_cpp();
-    return R_NilValue;
 END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
-    {"_genescaper_square_cpp", (DL_FUNC) &_genescaper_square_cpp, 1},
-    {"_genescaper_foo_cpp", (DL_FUNC) &_genescaper_foo_cpp, 0},
+    {"_genescaper_predict_map_cpp", (DL_FUNC) &_genescaper_predict_map_cpp, 10},
     {NULL, NULL, 0}
 };
 
