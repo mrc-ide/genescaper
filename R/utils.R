@@ -29,22 +29,22 @@ dlogitnorm <- function(p, raw_mu = 0.0, raw_sigsq = 1.0, return_log = TRUE) {
 #'   vector of longitudes and latitudes. Distances are returned in a pairwise
 #'   distance matrix.
 #' 
-#' @param long,lat vector of longitudes and latitudes.
+#' @param lon,lat vector of longitudes and latitudes.
 #'
 #' @importFrom  stats as.dist
 #' @export
 
-get_GC_distance <- function(long, lat) {
+get_GC_distance <- function(lon, lat) {
   
   # check inputs
-  assert_vector_numeric(long)
+  assert_vector_numeric(lon)
   assert_vector_numeric(lat)
-  assert_same_length(long, lat)
-  assert_bounded(long, left = -180, right = 180)
+  assert_same_length(lon, lat)
+  assert_bounded(lon, left = -180, right = 180)
   assert_bounded(lat, left = -90, right = 90)
   
   # calculate distance matrix
-  ret <- apply(cbind(long, lat), 1, function(y) {lonlat_to_bearing(long, lat, y[1], y[2])$gc_dist})
+  ret <- apply(cbind(lon, lat), 1, function(y) {lonlat_to_bearing(lon, lat, y[1], y[2])$gc_dist})
   ret <- as.dist(ret, upper = FALSE)
   
   return(ret)
@@ -151,4 +151,73 @@ update_progress <- function(pb_list, name, i, max_i, close = TRUE) {
   if (i == max_i & close) {
     close(pb_list[[name]])
   }
+}
+
+#------------------------------------------------
+# if a single value is provided then expand to a vector of length n
+#' @noRd
+force_vector <- function(x, n) {
+  if (length(x) == 1) {
+    return(rep(x,n))
+  } else {
+    return(x)
+  }
+}
+
+#------------------------------------------------
+#' @title Calculate ellipse polygon coordinates from foci and eccentricity
+#'
+#' @description TODOalculate ellipse polygon coordinates from foci and eccentricity.
+#'
+#' @param f1 x- and y-coordinates of the first focus.
+#' @param f2 x- and y-coordinates of the second focus.
+#' @param ecc eccentricity of the ellipse, defined as half the distance between
+#'   foci divided by the semi-major axis. We can say \eqn{e = sqrt{1 -
+#'   b^2/a^2}}, where \eqn{e} is the eccentricity, \eqn{a} is the length of the
+#'   semi-major axis, and \eqn{b} is the length of the semi-minor axis.
+#'   Eccentricity ranges from 0 (perfect circle) to 1 (straight line between
+#'   foci), although eccentricity of 0 is not allowed in this function as it
+#'   would lead to an infinitely large circle.
+#' @param n number of points in polygon.
+#'
+#' @export
+
+get_ellipse <- function(f1 = c(-3, 0), f2 = c(3, 0), ecc = 0.8, n = 100) {
+  
+  # check inputs
+  assert_vector_numeric(f1)
+  assert_length(f1, 2)
+  assert_vector_numeric(f2)
+  assert_length(f2, 2)
+  assert_single_bounded(ecc, inclusive_left = FALSE)
+  assert_bounded(ecc, inclusive_left = FALSE)
+  assert_single_pos_int(n)
+  
+  # define half-distance between foci (c), semi-major axis (a) and semi-minor
+  # axis(b)
+  c <- 0.5 * sqrt(sum((f2 - f1)^2))
+  a <- c / ecc
+  b <- sqrt(a^2 - c^2)
+  
+  # define slope of ellipse (alpha) and angle of points from centre (theta)
+  alpha <- atan2(f2[2] - f1[2], f2[1] - f1[1])
+  theta <- seq(0, 2*pi, l = n + 1)
+  
+  # define x and y coordinates
+  x <- (f1[1] + f2[1]) / 2 + a*cos(theta)*cos(alpha) - b*sin(theta)*sin(alpha)
+  y <- (f1[2] + f2[2]) / 2 + a*cos(theta)*sin(alpha) + b*sin(theta)*cos(alpha)
+  
+  # ensure ellipse closes perfectly
+  x[n + 1] <- x[1]
+  y[n + 1] <- y[1]
+  
+  # return as dataframe
+  return(data.frame(x = x, y = y))
+}
+
+# -----------------------------------
+# takes matrix as input, converts to list format for use within Rcpp code
+#' @noRd
+matrix_to_rcpp <- function(x) {
+  return(split(x, f = 1:nrow(x)))
 }

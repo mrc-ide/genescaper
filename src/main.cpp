@@ -44,7 +44,7 @@ Rcpp::List predict_map_cpp(Rcpp::List data_list, Rcpp::List mcmc_sample,
   double alpha_0 = sigsq_mean * sigsq_mean / sigsq_var + 2.0;
   double beta_0 = sigsq_mean * (alpha_0 - 1.0);
   
-  // initialise correlation matrices
+  // initialise kernel matrices
   vector<vector<double>> R_11(n_site, vector<double>(n_site, 1.0));
   vector<vector<double>> R_12(n_site, vector<double>(n_pred, 1.0));
   vector<vector<double>> R_22(n_pred, vector<double>(n_pred, 1.0));
@@ -175,4 +175,66 @@ Rcpp::List predict_map_cpp(Rcpp::List data_list, Rcpp::List mcmc_sample,
   
   // return list
   return Rcpp::List::create(Rcpp::Named("ret") = ret);
+}
+
+//------------------------------------------------
+// wrangle data into shape before calculating pairwise Gst
+Rcpp::List wrangle_pairwise_Gst_cpp(Rcpp::List freq_array) {
+  
+  // get frequency data into array
+  vector<vector<vector<double>>> p = rcpp_to_array_double(freq_array);
+  
+  // calcualte pairwise Gst
+  vector<double> Gst = calculate_pairwise_Gst(p);
+  
+  // return list
+  return Rcpp::List::create(Rcpp::Named("Gst") = Gst);
+}
+
+//------------------------------------------------
+// calculate pairwise Gst averaged over loci
+vector<double> calculate_pairwise_Gst(const vector<vector<vector<double>>> &p) {
+  
+  // get basic data dimensions
+  int loci = p.size();
+  int n_demes = p[0][0].size();
+  
+  // initialise return object
+  vector<double> Gst(0.5 * n_demes * (n_demes - 1));
+  
+  // initialise object for storing gene identity within demes
+  vector<double> JS(n_demes);
+  
+  // loop over loci
+  for (int l = 0; l < loci; ++l) {
+    int alleles = p[l].size();
+    
+    // get gene identity within demes
+    fill(JS.begin(), JS.end(), 0.0);
+    for (int i = 0; i < n_demes; ++i) {
+      for (int k = 0; k < alleles; ++k) {
+        JS[i] += sq(p[l][k][i]);
+      }
+    }
+    
+    // get gene identity between demes and calculate Gst
+    int ix = 0;
+    for (int i = 0; i < (n_demes - 1); ++i) {
+      for (int j = (i + 1); j < n_demes; ++j) {
+        double JT = 0.0;
+        for (int k = 0; k < alleles; ++k) {
+          JT += sq(0.5*(p[l][k][i] + p[l][k][j]));
+        }
+        Gst[ix++] += (0.5*(JS[i] + JS[j]) - JT) / (1.0 - JT);
+      }
+    }
+    
+  }  // end loop over loci
+  
+  // divide Gst through by number of loci
+  for (int i = 0; i < Gst.size(); ++i) {
+    Gst[i] /= (double)loci;
+  }
+  
+  return Gst;
 }

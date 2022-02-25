@@ -4,10 +4,10 @@
 \alias{get_GC_distance}
 \title{Calculate great circle distance between pairwise coordinates}
 \usage{
-get_GC_distance(long, lat)
+get_GC_distance(lon, lat)
 }
 \arguments{
-\item{long, lat}{vector of longitudes and latitudes.}
+\item{lon, lat}{vector of longitudes and latitudes.}
 }
 \description{
 Get great circle distance between spatial points defined by a

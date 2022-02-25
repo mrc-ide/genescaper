@@ -106,7 +106,7 @@ plot_prior_cor <- function(project, type = 1, n_reps = 10, d_max = NULL) {
     # get correlation curve over all reps
     d <- seq(0, d_max, l = 201)
     fd <- mapply(function(i) {
-      (1.0 - nu[i])*exp(-d / lambda[i])
+      nu[i] * exp(-d / lambda[i])
     }, 1:n_reps)
     
     # create plot object

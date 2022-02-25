@@ -30,9 +30,35 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// wrangle_pairwise_Gst_cpp
+Rcpp::List wrangle_pairwise_Gst_cpp(Rcpp::List freq_array);
+RcppExport SEXP _genescaper_wrangle_pairwise_Gst_cpp(SEXP freq_arraySEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::List >::type freq_array(freq_arraySEXP);
+    rcpp_result_gen = Rcpp::wrap(wrangle_pairwise_Gst_cpp(freq_array));
+    return rcpp_result_gen;
+END_RCPP
+}
+// sim_wrightfisher_cpp
+Rcpp::List sim_wrightfisher_cpp(Rcpp::List args, Rcpp::List args_functions, Rcpp::List args_progress);
+RcppExport SEXP _genescaper_sim_wrightfisher_cpp(SEXP argsSEXP, SEXP args_functionsSEXP, SEXP args_progressSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::List >::type args(argsSEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type args_functions(args_functionsSEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type args_progress(args_progressSEXP);
+    rcpp_result_gen = Rcpp::wrap(sim_wrightfisher_cpp(args, args_functions, args_progress));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_genescaper_predict_map_cpp", (DL_FUNC) &_genescaper_predict_map_cpp, 10},
+    {"_genescaper_wrangle_pairwise_Gst_cpp", (DL_FUNC) &_genescaper_wrangle_pairwise_Gst_cpp, 1},
+    {"_genescaper_sim_wrightfisher_cpp", (DL_FUNC) &_genescaper_sim_wrightfisher_cpp, 3},
     {NULL, NULL, 0}
 };
 

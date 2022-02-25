@@ -5,3 +5,11 @@ predict_map_cpp <- function(data_list, mcmc_sample, dist_11, dist_12, dist_22, p
     .Call(`_genescaper_predict_map_cpp`, data_list, mcmc_sample, dist_11, dist_12, dist_22, params, inner_reps, args_progress, args_functions, args_misc)
 }
 
+wrangle_pairwise_Gst_cpp <- function(freq_array) {
+    .Call(`_genescaper_wrangle_pairwise_Gst_cpp`, freq_array)
+}
+
+sim_wrightfisher_cpp <- function(args, args_functions, args_progress) {
+    .Call(`_genescaper_sim_wrightfisher_cpp`, args, args_functions, args_progress)
+}
+

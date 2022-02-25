@@ -147,7 +147,7 @@ SEXP loglike(Rcpp::NumericVector params, Rcpp::List data, Rcpp::List misc) {
   for (int i = 0; i < (n_site - 1); ++i) {
     for (int j = (i + 1); j < n_site; ++j) {
       double d = site_dist(i, j);
-      R[i][j] = (1 - nu) * exp(-d * inv_lambda);
+      R[i][j] = nu * exp(-d * inv_lambda);
       R[j][i] = R[i][j];
     }
   }
@@ -169,16 +169,16 @@ SEXP loglike(Rcpp::NumericVector params, Rcpp::List data, Rcpp::List misc) {
     vector<double> z = Rcpp::as< vector<double> >(data[combo_i]);
     
     // calculate intermediate quantities that apply to this combo
-    double R_inv_xsum = 0.0;
-    double R_inv_xsq = 0.0;
+    double R_inv_zsum = 0.0;
+    double R_inv_zsq = 0.0;
     for (int i = 0; i < n_site; ++i) {
       for (int j = 0; j < n_site; ++j) {
-        R_inv_xsum += z[i] * R_inv[i][j];
-        R_inv_xsq += z[i] * z[j] * R_inv[i][j];
+        R_inv_zsum += z[i] * R_inv[i][j];
+        R_inv_zsq += z[i] * z[j] * R_inv[i][j];
       }
     }
-    double phi_1 = (gamma_0 * phi_0 + R_inv_xsum) / gamma_1;
-    double beta_1 = beta_0 + 0.5*(gamma_0*phi_0*phi_0 - gamma_1*phi_1*phi_1 + R_inv_xsq);
+    double phi_1 = (gamma_0 * phi_0 + R_inv_zsum) / gamma_1;
+    double beta_1 = beta_0 + 0.5*(gamma_0*phi_0*phi_0 - gamma_1*phi_1*phi_1 + R_inv_zsq);
     
     // calculate multivariate normal likelihood
     ret += alpha_0*log(beta_0) - alpha_1*log(beta_1) + lgamma(alpha_1) - lgamma(alpha_0) + 0.5*log(gamma_0) -0.5*log(gamma_1) - 0.5*R_logdet;
