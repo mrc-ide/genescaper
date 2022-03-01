@@ -335,9 +335,12 @@ predict_map <- function(project, loci, reps = 2, inner_reps = 10,
     dplyr::filter(.data$locus %in% loci) %>%
     transform_p_to_z()
   
-  # get z values split by locus and allele
-  data_list <- lapply(split(data_df, data_df$locus, drop = TRUE),
-                      function(x) split(x[["z"]], x[['allele']], drop = TRUE))
+  # get z values split by locus and grouped into matrix by allele
+  data_list <- lapply(split(data_df, data_df$locus), function(x) {
+    tidyr::pivot_wider(x, names_from = site_ID, values_from = z) %>%
+      select(-locus, -allele) %>%
+      as.matrix()
+  })
   
   # get distance between sampling sites
   site_coords <- project$data$raw$site_data %>%
@@ -377,6 +380,8 @@ predict_map <- function(project, loci, reps = 2, inner_reps = 10,
     output_raw <- predict_map_cpp(data_list[[i]], mcmc_sample, dist_11, dist_12,
                                   dist_22, project$model$parameters, inner_reps,
                                   args_progress, args_functions, args_misc)
+    
+    return(output_raw)
     
     # get raw output into array
     sim_array <- mapply(function(x) {
