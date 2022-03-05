@@ -131,6 +131,7 @@ SEXP loglike(Rcpp::NumericVector params, Rcpp::List data, Rcpp::List misc) {
   double mu_scale = misc["mu_scale"];
   double sigsq_mean = misc["sigsq_mean"];
   double sigsq_var = misc["sigsq_var"];
+  double dist_power = 1.0;
   
   // reparameterise for convenience
   double phi_0 = mu_mean;
@@ -147,7 +148,7 @@ SEXP loglike(Rcpp::NumericVector params, Rcpp::List data, Rcpp::List misc) {
   for (int i = 0; i < (n_site - 1); ++i) {
     for (int j = (i + 1); j < n_site; ++j) {
       double d = site_dist(i, j);
-      R[i][j] = nu * exp(-d * inv_lambda);
+      R[i][j] = nu * exp(-pow(d * inv_lambda, dist_power));
       R[j][i] = R[i][j];
     }
   }

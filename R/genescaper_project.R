@@ -14,7 +14,7 @@ genescaper_project <- function() {
                   maps = NULL,
                   pairwise_predictions = NULL,
                   distance_predictions = NULL,
-                  pMAPI = NULL)
+                  GeoMAPI = NULL)
   
   class(project) <- "genescaper_project"
   

@@ -22,7 +22,6 @@ RoxygenNote: 7.1.1
 LinkingTo: 
     Rcpp,
     RcppArmadillo,
-    RcppEigen
 Imports: 
     magrittr,
     dplyr,
@@ -31,7 +30,9 @@ Imports:
     drjacoby,
     sf,
     ggplot2,
-    purrr
+    purrr,
+    abind,
+    tidyr
 Remotes: mrc-ide/drjacoby@v1.5.2
 SystemRequirements: C++11
 Suggests: 

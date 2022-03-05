@@ -11,7 +11,6 @@ NULL
 # link to Rcpp
 #' @useDynLib genescaper, .registration = TRUE
 #' @importFrom Rcpp sourceCpp
-#' @import RcppEigen
 NULL
 
 #------------------------------------------------

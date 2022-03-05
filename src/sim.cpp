@@ -73,6 +73,11 @@ Rcpp::List sim_wrightfisher_cpp(Rcpp::List args, Rcpp::List args_functions, Rcpp
     t_out_next++;
   }
   
+  // report progress
+  if (!silent) {
+    print("Simulating");
+  }
+  
   // loop through generations
   for (int t = 1; t < (max(t_out) + 1); ++t) {
     
