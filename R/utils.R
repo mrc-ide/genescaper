@@ -45,7 +45,6 @@ get_GC_distance <- function(lon, lat) {
   
   # calculate distance matrix
   ret <- apply(cbind(lon, lat), 1, function(y) {lonlat_to_bearing(lon, lat, y[1], y[2])$gc_dist})
-  ret <- as.dist(ret, upper = FALSE)
   
   return(ret)
 }
@@ -121,7 +120,7 @@ transform_p_to_z <- function(genetic_data) {
   # amount of unit interval that remains once previous frequencies have been
   # taken into account. This creates (J - 1) ostensibly independent frequencies,
   # where J is the number of alleles. The final p_stick always equals 1 and so
-  # this allele can be dropped. Iin other words, there are J - 1 degrees of
+  # this allele can be dropped. In other words, there are J - 1 degrees of
   # freedom and so we are reducing from J dependent frequencies to J-1
   # independent frequencies. z values are then calculated as logit(p_stick).
   ret <- genetic_data %>%
@@ -135,6 +134,36 @@ transform_p_to_z <- function(genetic_data) {
     dplyr::select(-.data$J, -.data$stick_remaining, -.data$p_stick)
   
   return(ret)
+}
+
+#------------------------------------------------
+# The reverse transform of transform_p_to_z(). Takes a matrix of z-values with
+# sites in rows and alleles in columns.
+#' @noRd
+transform_z_to_p <- function(z) {
+  
+  # check inputs
+  assert_matrix_numeric(z)
+  
+  # get basic dimensions
+  n_alleles <- ncol(z)
+  
+  # logistic transform
+  q <- 1 / (1 + exp(-z))
+  
+  # apply stick-breaking transform
+  p <- matrix(NA, nrow(q), n_alleles + 1)
+  p[,1] <- q[,1]
+  stick_remaining <- 1 - p[,1]
+  if (n_alleles > 1) {
+    for (i in 2:n_alleles) {
+      p[,i] <- stick_remaining * q[,i]
+      stick_remaining <- stick_remaining - p[,i]
+    }
+  }
+  p[,n_alleles + 1] <- stick_remaining
+  
+  return(p)
 }
 
 #------------------------------------------------
@@ -220,4 +249,121 @@ get_ellipse <- function(f1 = c(-3, 0), f2 = c(3, 0), ecc = 0.8, n = 100) {
 #' @noRd
 matrix_to_rcpp <- function(x) {
   return(split(x, f = 1:nrow(x)))
+}
+
+# -----------------------------------
+# calculate pairwise Gst from a matrix or 3D array of allele frequencies. The
+# dimensions must be either 1) demes, 2) alleles for a matrix, or 1) demes, 2)
+# reps, 3) alleles for an array.
+#' @noRd
+calc_pairwise_Gst <- function(x) {
+  
+  # split based on matrix vs array
+  if (length(dim(x)) == 2) {
+    
+    # get basic dimensions
+    demes <- nrow(x)
+    alleles <- ncol(x)
+    
+    # get all pairs of demes
+    deme_pairs <- cbind(rep(1:(demes - 1), times = (demes - 1):1),
+                        unlist(mapply(function(i) i:demes, 2:demes)))
+    
+    # calculate Gst for all pairs
+    x_bar <- 0.5 * (x[deme_pairs[,1],] + x[deme_pairs[,2],])
+    J_t <- rowSums(x_bar^2)
+    J_i <- rowSums(x^2)
+    J_s <- 0.5 * (J_i[deme_pairs[,1]] + J_i[deme_pairs[,2]])
+    Gst <- (J_s - J_t) / (1 - J_t)
+    
+  } else if (length(dim(x)) == 3) {
+    
+    # get basic dimensions
+    demes <- dim(x)[1]
+    reps <- dim(x)[2]
+    alleles <- dim(x)[3]
+    
+    # get all pairs of demes
+    deme_pairs <- cbind(rep(1:(demes - 1), times = (demes - 1):1),
+                        unlist(mapply(function(i) i:demes, 2:demes)))
+    
+    # calculate Gst for all pairs
+    x_bar <- 0.5 * (x[deme_pairs[,1],,,drop = FALSE] + x[deme_pairs[,2],,,drop = FALSE])
+    J_t <- J_i <- 0
+    for (i in seq_len(alleles)) {
+      J_t <- J_t + x_bar[,,i]^2
+      J_i <- J_i + x[,,i]^2
+    }
+    if (reps == 1) {
+      J_t <- matrix(J_t)
+      J_i <- matrix(J_i)
+    }
+    J_s <- 0.5 * (J_i[deme_pairs[,1],,drop = FALSE] + J_i[deme_pairs[,2],,drop = FALSE])
+    Gst <- (J_s - J_t) / (1 - J_t)
+    
+  } else {
+    stop("input must be matrix or array")
+  }
+  
+  return(Gst)
+}
+
+# -----------------------------------
+# takes a series of n-choose-2 pairwise values and aranges them in an n-by-n
+# matrix, in which values are reflected on the diagonal
+#' @noRd
+pairwise_to_mat <- function(x) {
+  
+  # get required dimension of matrix
+  n <- 0.5 + 0.5 * sqrt(1 + 8 * length(x))
+  
+  # arrange in matrix
+  ret <- matrix(0, n, n)
+  ret[lower.tri(ret)] <- x
+  ret[upper.tri(ret)] <- t(ret)[upper.tri(ret)]
+  
+  ret
+}
+
+# -----------------------------------
+# Bejamini and Yekutieli (2001) method for identifying significant results while
+# fixing the false descovery rate. df_res must be a dataframe with columns:
+# cell, p, direction.
+#' @noRd
+Bejamini_Yekutieli <- function(df_res, FDR) {
+  
+  # sort in order of increasing p
+  df_res <- df_res[order(df_res$p),]
+  
+  # Bejamini and Yekutieli (2001) method for identifying significant results
+  # while fixing the false descovery rate
+  df_res$BY <- FDR * seq_along(df_res$p) / nrow(df_res)
+  lines(df_res$BY)
+  which_lower <- which_upper <- integer()
+  if (any(df_res$p <= df_res$BY, na.rm = TRUE)) {
+    
+    w <- which(df_res$p <= df_res$BY)
+    which_upper <- df_res$cell[w][df_res$direction[w] > 0]
+    which_lower <- df_res$cell[w][df_res$direction[w] <= 0]
+  }
+  
+  return(list(upper = which_upper,
+              lower = which_lower))
+}
+
+# -----------------------------------
+# get mean, sd and quantiles over rows of matrix
+#' @noRd
+get_summaries <- function(x, quantiles = NULL) {
+  ret <- list(mean = rowMeans(x),
+              sd = apply(x, 1, sd))
+  if (!is.null(quantiles)) {
+    quants <- list()
+    for (i in seq_along(quantiles)) {
+      quants[[i]] <- apply(x, 1, quantile, probs = quantiles[i])
+    }
+    names(quants) <- sprintf("%s%%", round(quantiles * 100, digits = 1))
+    ret$quantiles <- quants
+  }
+  return(ret)
 }

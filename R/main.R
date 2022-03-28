@@ -83,15 +83,6 @@ bind_data <- function(project, site_data, genetic_data) {
 
 get_pairwise_Gst <- function(project) {
   
-  freq_array <- project$data$raw$genetic_data %>%
-    dplyr::group_by(.data$locus) %>%
-    dplyr::group_split() %>%
-    lapply(function (x) {
-      x %>% dplyr::group_by(.data$allele) %>%
-        dplyr::group_split() %>%
-        lapply(function (x) x$freq)
-    })
-  
   # get allele frequencies into list over loci then matrix over demes and
   # alleles
   freq_list <- project$data$raw$genetic_data %>%
@@ -103,11 +94,18 @@ get_pairwise_Gst <- function(project) {
         as.matrix()
     })
   
-  # pass to efficient C++ function
-  output_raw <- get_mean_pairwise_Gst_cpp(freq_list)
+  # calculate mean Gst over loci
+  Gst <- 0
+  for (i in seq_along(freq_list)) {
+    Gst <- Gst + calc_pairwise_Gst(freq_list[[i]])
+  }
+  Gst <- Gst / length(freq_list)
   
-  # convert to distance matrix and load into project
-  project$data$pairwise_measures$Gst <- as.dist(t(output_raw))
+  # get into matrix
+  Gst_mat <- pairwise_to_mat(Gst)
+  
+  # load into project
+  project$data$pairwise_measures$Gst <- Gst_mat
   
   return(project)
 }
@@ -123,15 +121,15 @@ get_pairwise_Gst <- function(project) {
 #' @param mu_scale TODO
 #' @param sigsq_mean TODO
 #' @param sigsq_var TODO
-#' @param lambda_mean TODO
-#' @param lambda_var TODO
 #' @param nu_shape1 TODO
 #' @param nu_shape2 TODO
+#' @param lambda_mean TODO
+#' @param lambda_var TODO
 #'
 #' @export
 
 define_model <- function(project, mu_mean = 0.0, mu_scale = 1.0, sigsq_mean = 1.0, sigsq_var = 1.0,
-                         lambda_mean = 5.0, lambda_var = 10.0, nu_shape1 = 1.0, nu_shape2 = 1.0) {
+                         nu_shape1 = 1.0, nu_shape2 = 1.0, lambda_mean = 5.0, lambda_var = 10.0) {
   
   # check inputs
   assert_class(project, "genescaper_project")
@@ -139,20 +137,20 @@ define_model <- function(project, mu_mean = 0.0, mu_scale = 1.0, sigsq_mean = 1.
   assert_single_pos(mu_scale, zero_allowed = FALSE)
   assert_single_pos(sigsq_mean, zero_allowed = FALSE)
   assert_single_pos(sigsq_var, zero_allowed = FALSE)
-  assert_single_pos(lambda_mean, zero_allowed = FALSE)
-  assert_single_pos(lambda_var, zero_allowed = FALSE)
   assert_single_pos(nu_shape1, zero_allowed = FALSE)
   assert_single_pos(nu_shape2, zero_allowed = FALSE)
+  assert_single_pos(lambda_mean, zero_allowed = FALSE)
+  assert_single_pos(lambda_var, zero_allowed = FALSE)
   
   # store within project
   project$model$parameters <- list(mu_mean = mu_mean,
                                    mu_scale = mu_scale,
                                    sigsq_mean = sigsq_mean,
                                    sigsq_var = sigsq_var,
-                                   lambda_mean = lambda_mean,
-                                   lambda_var = lambda_var,
                                    nu_shape1 = nu_shape1,
-                                   nu_shape2 = nu_shape2)
+                                   nu_shape2 = nu_shape2,
+                                   lambda_mean = lambda_mean,
+                                   lambda_var = lambda_var)
   
   return(project)
 }
@@ -169,7 +167,7 @@ define_model <- function(project, mu_mean = 0.0, mu_scale = 1.0, sigsq_mean = 1.
 #'
 #' @export
 
-run_mcmc <- function(project, ...) {
+run_mcmc <- function(project, mu_true, sigsq_true, ...) {
   
   # check inputs
   assert_class(project, "genescaper_project")
@@ -179,13 +177,62 @@ run_mcmc <- function(project, ...) {
   assert_non_null(project$model$parameters)
   
   # get distance between all sites
-  site_dist <- as.matrix(project$data$pairwise_measures$distance)
+  site_dist <- project$data$pairwise_measures$distance
   
-  # Transform allele frequencies to z values. These are split into a list over
-  # all locus&allele combos. Each combo has an independent mean and variance
-  # under the model and so we can treat these as equivalent replicates.
-  z_list <- project$data$raw$genetic_data %>%
-    transform_p_to_z() %>%
+  # transform allele frequencies to z values
+  z_df <- project$data$raw$genetic_data %>%
+    transform_p_to_z()
+  
+  # get some prior parameters from data (empirical Bayes)
+  prior_df <- z_df %>% 
+    dplyr::group_by(locus, allele) %>%
+    dplyr::summarise(m = mean(z),
+                     v = var(z),
+                     coef_var = 1,
+                     alpha = coef_var^2 + 2,
+                     beta = (alpha - 1) * v,
+                     phi = m,
+                     gamma = 1,
+                     .groups = "keep")
+  
+  plot1 <- prior_df %>%
+    bind_cols(mu_true = mu_true,
+              sigsq_true = sigsq_true) %>%
+    ggplot() + theme_bw() +
+    geom_point(aes(x = mu_true, y = m)) +
+    geom_abline(aes(slope = 1, intercept = 0)) +
+    xlim(c(-5,5)) + ylim(c(-5, 5))
+  #print(plot1)
+  
+  plot2 <- prior_df %>%
+    bind_cols(mu_true = mu_true,
+              sigsq_true = sigsq_true) %>%
+    ggplot() + theme_bw() +
+    geom_point(aes(x = sigsq_true, y = v)) +
+    geom_abline(aes(slope = 1, intercept = 0)) +
+    xlim(c(-5,5)) + ylim(c(-5, 5))
+  #print(plot2)
+  
+  if (FALSE) {
+  prior_df <- z_df %>% 
+    dplyr::group_by(locus, allele) %>%
+    dplyr::summarise(m = mu_true,
+                     v = sigsq_true,
+                     coef_var = 100,
+                     alpha = coef_var^2 + 2,
+                     beta = (alpha - 1) * v,
+                     phi = m,
+                     gamma = 1,
+                     .groups = "keep")
+  
+  prior_df$alpha <- 0.01
+  prior_df$beta <- 0.01
+  prior_df$phi <- 0.0
+  prior_df$gamma <- 1.0
+  }
+  
+  # split z-values into a list over all locus-allele combos
+  z_list <-  z_df %>%
     dplyr::select(.data$locus, .data$allele, .data$z) %>%
     dplyr::group_by(.data$locus, .data$allele) %>%
     dplyr::group_split() %>%
@@ -193,8 +240,10 @@ run_mcmc <- function(project, ...) {
   names(z_list) <- seq_along(z_list)
   
   # define parameters dataframe
-  df_params <- drjacoby::define_params(name = "log_lambda", min = -Inf, max = Inf,
-                                       name = "nu", min = 0, max = 1)
+  df_params <- drjacoby::define_params(name = "nu", min = 0, max = 1,
+                                       name = "log_lambda", min = -Inf, max = Inf,
+                                       name = "omega", min = 1, max = 2,
+                                       name = "gamma", min = 0.1, max = 10)
   
   # source C++ likelihood and prior functions
   Rcpp::sourceCpp(system.file("extdata/GRF_model.cpp", package = 'genescaper', mustWork = TRUE))
@@ -204,7 +253,11 @@ run_mcmc <- function(project, ...) {
                              df_params = df_params,
                              misc = append(project$model$parameters,
                                            list(site_dist = site_dist,
-                                                n_site = nrow(site_dist))),
+                                                n_site = nrow(site_dist),
+                                                alpha = prior_df$alpha,
+                                                beta = prior_df$beta,
+                                                phi = prior_df$phi,
+                                                gamma = prior_df$gamma)),
                              loglike = "loglike",
                              logprior = "logprior",
                              ...)
@@ -285,12 +338,16 @@ create_hex_grid <- function(project, hex_width = NULL, border_coords = NULL) {
   hex_pts_df <- as.data.frame(t(mapply(as.vector, hex_pts)))
   names(hex_pts_df) <- c("longitude", "latitude")
   
+  # get adjacency list
+  hex_adj <- st_touches(hex_polys)
+  
   message(sprintf("%s hexagons created", nhex))
   
   # add to project
   project$maps <- list(grid = list(parameters = list(hex_width = hex_width),
                                    centroids = hex_pts_df,
-                                   polygons = hex_polys))
+                                   polygons = hex_polys,
+                                   adjacency = hex_adj))
   
   return(project)
 }
@@ -307,6 +364,7 @@ create_hex_grid <- function(project, hex_width = NULL, border_coords = NULL) {
 #' @param inner_reps TODO
 #' @param quantiles TODO
 #' @param exceedance TODO
+#' @param silent TODO
 #' @param pb_markdown TODO
 #'
 #' @importFrom utils txtProgressBar
@@ -315,7 +373,7 @@ create_hex_grid <- function(project, hex_width = NULL, border_coords = NULL) {
 
 predict_map <- function(project, loci, reps = 2, inner_reps = 10,
                         quantiles = c(0.025, 0.5, 0.975), exceedance = NULL,
-                        pb_markdown = FALSE) {
+                        silent = FALSE, pb_markdown = FALSE) {
   
   # check inputs
   assert_class(project, "genescaper_project")
@@ -328,12 +386,13 @@ predict_map <- function(project, loci, reps = 2, inner_reps = 10,
   if (!is.null(exceedance)) {
     assert_vector_bounded(exceedance)
   }
+  assert_single_logical(silent)
   assert_single_logical(pb_markdown)
   
   # sample parameters from posterior
   mcmc_sample <- project$model$MCMC$output %>%
     dplyr::filter(.data$phase == "sampling") %>%
-    dplyr::select(.data$lambda, .data$nu) %>%
+    dplyr::select(.data$nu, .data$lambda, .data$omega) %>%
     dplyr::sample_n(reps) %>%
     as.list()
   
@@ -379,17 +438,25 @@ predict_map <- function(project, loci, reps = 2, inner_reps = 10,
   
   # loop through loci
   for (i in seq_along(loci)) {
-    message(sprintf("\nlocus %s of %s", i, length(loci)))
+    if (!silent) {
+      message(sprintf("\nlocus %s of %s", i, length(loci)))
+    }
     
     # draw from predictive distribution via efficient C++ function
-    output_raw <- predict_map_cpp(data_list[[i]], mcmc_sample, dist_11, dist_12,
+    sim_array <- predict_map_cpp(data_list[[i]], mcmc_sample, dist_11, dist_12,
                                   dist_22, project$model$parameters, inner_reps,
-                                  args_progress, args_functions, args_misc)
+                                  args_progress, args_functions, args_misc) %>%
+      abind::abind(along = 2)
     
-    #return(output_raw)
+    #return(sim_array)
     
-    # get raw output into single array
-    sim_array <- abind::abind(output_raw$ret, along = 2)
+    if (!silent) {
+      if (i == 1) {
+        message("processing")
+      } else {
+        message("\nprocessing")
+      }
+    }
     
     # get mean and standard deviation over sims
     project$maps$predictions[[i]]$mean <-  apply(sim_array, c(1, 3), mean)
@@ -397,12 +464,11 @@ predict_map <- function(project, loci, reps = 2, inner_reps = 10,
     
     # get quantiles
     if (!is.null(quantiles)) {
+      sim_quants <- apply(sim_array, c(1, 3), quantile, probs = quantiles)
       if (length(quantiles) == 1) {
-        sim_quants <- apply(sim_array, c(1, 3), quantile, probs = quantiles) %>%
-          list()
+        sim_quants <- list(sim_quants)
       } else {
-        sim_quants <- apply(sim_array, c(1, 3), quantile, probs = quantiles) %>%
-          purrr::array_tree(margin = 1)
+        sim_quants <- purrr::array_tree(sim_quants, margin = 1)
       }
       names(sim_quants) <- sprintf("%s%%", round(quantiles * 100, digits = 1))
       project$maps$predictions[[i]]$quantiles <-  sim_quants
@@ -453,14 +519,60 @@ predict_pairwise <- function(project, reps = 2, inner_reps = 10,
   assert_single_logical(silent)
   assert_single_logical(pb_markdown)
   
+  # simulate Gst from null model
+  Gst_sim <- stat_sim(project, reps, inner_reps, silent, pb_markdown)
+  
+  if (!silent) {
+    message("Calculating summaries")
+  }
+  
   # get observed Gst values
-  obs_Gst <- as.matrix(project$data$pairwise_measures$Gst)
-  n_site <- nrow(obs_Gst)
+  Gst_obs <- project$data$pairwise_measures$Gst
+  n_site <- nrow(Gst_obs)
+  
+  # get mean and standard deviation over sims
+  sim_mean <- pairwise_to_mat(rowMeans(Gst_sim))
+  sim_sd <- pairwise_to_mat(apply(Gst_sim, 1, sd))
+  
+  # get quantiles
+  if (!is.null(quantiles)) {
+    sim_quants <- list()
+    for (i in seq_along(quantiles)) {
+      sim_quants[[i]] <- pairwise_to_mat(apply(Gst_sim, 1, quantile, probs = quantiles[i]))
+    }
+    names(sim_quants) <- sprintf("%s%%", round(quantiles * 100, digits = 1))
+  }
+  
+  # get percentile rank of observed data
+  Gst_obs_vec <- Gst_obs[lower.tri(Gst_obs)]
+  Gst_obs_mat <- matrix(Gst_obs_vec, nrow = length(Gst_obs_vec), ncol = reps * inner_reps)
+  sim_percentile_rank <- (rowSums(Gst_obs_mat > Gst_sim) + 1) / (reps * inner_reps + 1) * 100
+  
+  # load into project
+  project$pairwise_predictions$Gst <- list(mean = sim_mean,
+                                           sd = sim_sd,
+                                           quantiles = sim_quants,
+                                           percentile_rank = sim_percentile_rank)
+  
+  return(project)
+}
+
+# -----------------------------------
+# simulates pairwise stats by drawing from null model
+#' @noRd
+stat_sim <- function(project, reps, inner_reps, silent, pb_markdown) {
+  
+  # check inputs
+  assert_class(project, "genescaper_project")
+  assert_single_pos_int(reps, zero_allowed = FALSE)
+  assert_single_pos_int(inner_reps, zero_allowed = FALSE)
+  assert_single_logical(silent)
+  assert_single_logical(pb_markdown)
   
   # sample parameters from posterior
   mcmc_sample <- project$model$MCMC$output %>%
     dplyr::filter(.data$phase == "sampling") %>%
-    dplyr::select(.data$lambda, .data$nu) %>%
+    dplyr::select(.data$nu, .data$lambda, .data$omega) %>%
     dplyr::sample_n(reps) %>%
     as.list()
   
@@ -474,6 +586,9 @@ predict_pairwise <- function(project, reps = 2, inner_reps = 10,
       dplyr::select(-.data$locus, -.data$allele) %>%
       as.matrix() %>% t()
   })
+  loci <- seq_along(data_list)
+  n_loci <- length(loci)
+  alleles <- mapply(ncol, data_list)
   
   # get distance between sampling sites
   dist_11 <- as.matrix(project$data$pairwise_measures$distance)
@@ -482,85 +597,87 @@ predict_pairwise <- function(project, reps = 2, inner_reps = 10,
   args_functions <- list(update_progress = update_progress)
   
   # create progress bars
-  pb <- txtProgressBar(0, reps, initial = NA, style = 3)
+  pb <- txtProgressBar(0, n_loci, initial = NA, style = 3)
   args_progress <- list(pb = pb)
   
   # create misc list
-  args_misc <- list(silent = silent,
-                    pb_markdown = pb_markdown)
+  args_misc <- list(silent = TRUE,
+                    pb_markdown = TRUE)
   
-  # draw from predictive distribution via efficient C++ function
-  output_raw <- predict_pairwise_Gst_cpp(data_list, mcmc_sample, dist_11,
-                                         project$model$parameters, inner_reps,
-                                         args_progress, args_functions, args_misc)
-  
-  #return(output_raw)
-  
-  # get raw output into single array
-  sim_array <- abind::abind(output_raw$ret, along = 3)
-  
-  # get mean and sd of distribution
   if (!silent) {
-    message("Calculating mean and SD of null distribution")
-  }
-  sim_mean <- sim_sd <- matrix(NA, n_site, n_site)
-  for (i in 1:(n_site - 1)) {
-    for (j in (i + 1):n_site) {
-      sim_mean[i,j] <- mean(sim_array[i,j,])
-      sim_sd[i,j] <- sd(sim_array[i,j,])
-    }
+    message("Drawing from null distribution for each locus")
+    update_progress(args_progress, "pb", 0, n_loci)
   }
   
-  # get quantiles of distribution
-  sim_quantiles <- NULL
-  if (!is.null(quantiles)) {
+  # loop through loci
+  ret <- 0
+  df_all <- data.frame()
+  for (i in seq_along(loci)) {
+    
+    # draw from null distribution via efficient C++ function
+    out_raw <- null_site_cpp(data_list[[i]], mcmc_sample, dist_11,
+                               project$model$parameters, inner_reps,
+                               args_progress, args_functions, args_misc)
+    #sim_array <- null_site_cpp(data_list[[i]], mcmc_sample, dist_11,
+    #                           project$model$parameters, inner_reps,
+    #                           args_progress, args_functions, args_misc) %>%
+    sim_array <- out_raw$raw %>%
+      abind::abind(along = 2)
+    
+    df_i <- project$data$raw$genetic_data %>%
+      filter(locus == i) %>%
+      group_by(allele) %>%
+      summarise(p_mean_obs = mean(freq),
+                p_sd_obs = sd(freq),
+                locus = i) %>%
+      bind_cols(p_mean_sim = apply(sim_array, 3, mean),
+                p_sd_sim = apply(sim_array, 3, sd),
+                z_mean_obs = c(apply(data_list[[i]], 2, mean), NA),
+                z_sd_obs = c(apply(data_list[[i]], 2, sd), NA),
+                z_mean_sim = c(out_raw$mu, NA),
+                z_sd_sim = c(out_raw$sig, NA))
+    df_all <- rbind(df_all, df_i)
+    
+    #df_i %>%
+    #  select(z_sd_obs, z_sd_sim)
+    
+    # add to running estimate
+    ret <- ret + calc_pairwise_Gst(sim_array)
+    
     if (!silent) {
-      message("Calculating quantiles of null distribution")
+      update_progress(args_progress, "pb", i, n_loci)
     }
-    sim_quantiles <- array(NA, dim = c(n_site, n_site, length(quantiles)))
-    for (i in 1:(n_site - 1)) {
-      for (j in (i + 1):n_site) {
-        sim_quantiles[i,j,] <- quantile(sim_array[i,j,], probs = quantiles)
-      }
-    }
-  }
+  } # end loop through loci
   
-  # make into list
-  sim_quantiles <- mapply(function(i) sim_quantiles[,,i], seq_along(quantiles), SIMPLIFY = FALSE)
-  names(sim_quantiles) <- sprintf("Q%s", round(quantiles * 100, digits = 1))
+  #df_all %>%
+  #  filter((z_sd_sim - z_sd_obs) > 0.3)
   
-  # get ranking
-  if (!silent) {
-    message("Calculating ranking of observed values")
-  }
-  sim_rank <- matrix(NA, n_site, n_site)
-  for (i in 1:(n_site - 1)) {
-    for (j in (i + 1):n_site) {
-      sim_rank[i,j] <- mean(obs_Gst[i,j] > sim_array[i,j,])
-    }
-  }
+  df_all %>%
+    filter(!is.na(z_mean_obs)) %>%
+    ggplot() + theme_bw() +
+    geom_point(aes(x = z_mean_obs, y = z_mean_sim)) +
+    geom_abline()
   
-  # get empirical p-value via kernel density estimation
-  if (!silent) {
-    message("Calculating empirical p-values of observed values")
-  }
-  sim_p <- matrix(NA, n_site, n_site)
-  for (i in 1:(n_site - 1)) {
-    for (j in (i + 1):n_site) {
-      bw <- density(sim_array[i,j,])$bw
-      p_raw <- mean(pnorm(obs_Gst[i,j], mean = sim_array[i,j,], sd = bw))
-      sim_p[i,j] <- 1 - 2 * abs(p_raw - 0.5)
-    }
-  }
+  df_all %>%
+    ggplot() + theme_bw() +
+    geom_point(aes(x = p_mean_obs, y = p_mean_sim)) +
+    geom_abline()
   
-  # load into project
-  project$pairwise_predictions$Gst <- list(mean = sim_mean,
-                                           sd = sim_sd,
-                                           quantiles = sim_quantiles,
-                                           ranking = sim_rank,
-                                           empirical_p = sim_p)
+  df_all %>%
+    filter(!is.na(z_mean_obs)) %>%
+    ggplot() + theme_bw() +
+    geom_point(aes(x = z_sd_obs, y = z_sd_sim)) +
+    geom_abline()
   
-  return(project)
+  df_all %>%
+    ggplot() + theme_bw() +
+    geom_point(aes(x = p_sd_obs, y = p_sd_sim)) +
+    geom_abline()
+  
+  # divide through by loci
+  ret <- ret / n_loci
+  
+  return(ret)
 }
 
 #------------------------------------------------
@@ -678,79 +795,46 @@ GeoMAPI_analysis <- function(project, reps = 2, inner_reps = 10,
   assert_single_logical(pb_markdown)
   
   # get basic dimensions
-  n_site <- nrow(project$data$raw$site_data)
   n_cells <- project$GeoMAPI$edge_assignment %>% length()
-  total_reps <- reps * inner_reps
   
-  # sample parameters from posterior
-  mcmc_sample <- project$model$MCMC$output %>%
-    dplyr::filter(.data$phase == "sampling") %>%
-    dplyr::select(.data$lambda, .data$nu) %>%
-    dplyr::sample_n(reps) %>%
-    as.list()
+  # get observed Gst
+  Gst_obs_mat <- project$data$pairwise_measures$Gst
+  Gst_obs <- Gst_obs_mat[lower.tri(Gst_obs_mat)]
   
-  # transform frequencies to continuous scale
-  data_df <- project$data$raw$genetic_data %>%
-    transform_p_to_z()
-  
-  # get z values split by locus and grouped into matrix by allele
-  data_list <- lapply(split(data_df, data_df$locus), function(x) {
-    tidyr::pivot_wider(x, names_from = .data$site_ID, values_from = .data$z) %>%
-      dplyr::select(-.data$locus, -.data$allele) %>%
-      as.matrix() %>% t()
-  })
-  
-  # get distance between sampling sites
-  dist_11 <- as.matrix(project$data$pairwise_measures$distance)
-  
-  # create function list
-  args_functions <- list(update_progress = update_progress)
-  
-  # create progress bars
-  pb <- txtProgressBar(0, reps, initial = NA, style = 3)
-  args_progress <- list(pb = pb)
-  
-  # create misc list
-  args_misc <- list(silent = silent,
-                    pb_markdown = pb_markdown)
-  
-  # draw from predictive distribution via efficient C++ function
-  output_raw <- predict_pairwise_Gst_cpp(data_list, mcmc_sample, dist_11,
-                                         project$model$parameters, inner_reps,
-                                         args_progress, args_functions, args_misc)
-  
-  # get raw output into single array
-  sim_array <- abind::abind(output_raw$ret, along = 3)
-  
-  # create matrix relating edges to nodes
-  mat_node_edge <- cbind(node_1 = rep(1:(n_site - 1), times = (n_site - 1):1),
-                         node_2 = mapply(function(x) x:n_site, 2:n_site) %>% unlist())
-  
-  # get observed Gst matrix
-  obs_Gst <- as.matrix(project$data$pairwise_measures$Gst)
+  # simulate Gst from null model
+  Gst_sim <- stat_sim(project, reps, inner_reps, silent, pb_markdown)
   
   if (!silent) {
     message("Calculating z_scores")
   }
   
-  # calculate z_score for all grid cells. Nb, this was found to be no faster in
-  # C++
+  # normalise observed and simulated values
+  Gst_mean <- rowMeans(Gst_sim)
+  Gst_sd <- apply(Gst_sim, 1, sd)
+  Gst_obs_norm <- (Gst_obs - Gst_mean) / Gst_sd
+  Gst_sim_norm <- apply(Gst_sim, 2, function(x) {
+    (x - Gst_mean) / Gst_sd
+  })
+  
+  # calculate z_score for all grid cells
   z_score <- rep(NA, n_cells)
   for (i in 1:n_cells) {
-    w_e <- project$GeoMAPI$edge_assignment[[i]]
-    n_e <- length(w_e)
-    if (n_e == 0) {
+    edges <- project$GeoMAPI$edge_assignment[[i]]
+    n_edges <- length(edges)
+    if (n_edges == 0) {
       next()
     }
-    w_n <- mat_node_edge[w_e,, drop = FALSE]
-    obs_stat <- mean(obs_Gst[w_n])
-    sim_stat <- 0
-    for (j in seq_len(n_e)) {
-      sim_stat <- sim_stat + sim_array[w_n[j,1], w_n[j,2],]
-    }
-    sim_stat <- sim_stat / n_e
-    z_score[i] <- (obs_stat - mean(sim_stat)) / sd(sim_stat)
+    cell_obs <- mean(Gst_obs_norm[edges])
+    cell_sim <- colMeans(Gst_sim_norm[edges,,drop = FALSE])
+    z_score[i] <- (cell_obs - mean(cell_sim)) / sd(cell_sim)
   }
+  
+  #plot(z_score)
+  
+  #ggplot() + theme_bw() + theme(panel.grid.major = element_blank(),
+  #                              panel.grid.minor = element_blank()) +
+  #  geom_sf(aes_(fill = ~z_score), color = NA, data = myproj$maps$grid$polygons) +
+  #  scale_fill_gradientn(colours = viridisLite::viridis(100), name = "z_score")
   
   # save to project
   project$GeoMAPI$z_score <- z_score
@@ -773,14 +857,13 @@ GeoMAPI_analysis <- function(project, reps = 2, inner_reps = 10,
 #'   identified as significant is actually a false positive.
 #' @param min_coverage minimum coverage (number of edges assigned to a cell)
 #'   for it to be included in the final result.
+#' @param silent TODO
 #'
 #' @importFrom stats pnorm
 #' @export
 
-GeoMAPI_get_significant <- function(project,
-                                    test_tail = "both",
-                                    FDR = 0.05,
-                                    min_coverage = 10) {
+GeoMAPI_get_significant <- function(project, test_tail = "both", FDR = 0.05,
+                                    min_coverage = 10, silent = FALSE) {
   
   # check project
   assert_class(project, "genescaper_project")
@@ -788,6 +871,7 @@ GeoMAPI_get_significant <- function(project,
   assert_in(test_tail, c("left", "right", "both"))
   assert_single_bounded(FDR)
   assert_single_pos_int(min_coverage, zero_allowed = TRUE)
+  assert_single_logical(silent)
   
   # get results into dataframe
   df_res <- data.frame(cell = seq_along(project$maps$grid$polygons),
@@ -800,6 +884,10 @@ GeoMAPI_get_significant <- function(project,
   }
   df_res <- dplyr::filter(df_res, .data$coverage >= min_coverage)
   
+  if (!silent) {
+    message("Calculating significance")
+  }
+  
   # calculate p-values
   if (test_tail == "left") {
     df_res$p <- pnorm(df_res$z_score) 
@@ -809,23 +897,322 @@ GeoMAPI_get_significant <- function(project,
     df_res$p <- 2*pnorm(-abs(df_res$z_score))
   }
   
-  # sort in order of increasing p
-  df_res <- df_res[order(df_res$p),]
-  
   # Bejamini and Yekutieli (2001) method for identifying significant results
   # while fixing the false descovery rate
-  df_res$BY <- FDR * seq_along(df_res$p) / nrow(df_res)
-  which_lower <- which_upper <- integer()
-  if (any(df_res$p <= df_res$BY, na.rm = TRUE)) {
-    
-    w <- which(df_res$p <= df_res$BY)
-    which_upper <- df_res$cell[w][df_res$z_score[w] > 0]
-    which_lower <- df_res$cell[w][df_res$z_score[w] <= 0]
-  }
+  df_res$direction <- df_res$z_score
+  which_signif <- Bejamini_Yekutieli(df_res, FDR)
   
   # add to project
-  project$GeoMAPI$significance <- list(upper = which_upper,
-                                       lower = which_lower)
+  project$GeoMAPI$significance <- which_signif
+  
+  return(project)
+}
+
+#------------------------------------------------
+#' @title TODO
+#'
+#' @description TODO
+#'
+#' @param project a genescaper project, as produced by the
+#'   \code{genescaper_project()} function.
+#' @param loci TODO
+#' @param reps TODO
+#' @param inner_reps TODO
+#' @param silent TODO
+#' @param pb_markdown TODO
+#'
+#' @importFrom utils txtProgressBar
+#' @importFrom stats quantile sd
+#' @export
+
+Wombling <- function(project, loci = NULL, reps = 2, inner_reps = 10,
+                     measure = "all", patch_size = 1,
+                     quantiles = c(0.025, 0.5, 0.975),
+                     silent = FALSE, pb_markdown = FALSE) {
+  
+  # check inputs
+  assert_class(project, "genescaper_project")
+  if (is.null(loci)) {
+    loci <- unique(project$data$raw$genetic_data$locus)
+  }
+  assert_vector_pos_int(loci, zero_allowed = FALSE)
+  assert_single_pos_int(reps, zero_allowed = FALSE)
+  assert_single_pos_int(inner_reps, zero_allowed = FALSE)
+  assert_single_string(measure)
+  assert_in(measure, c("max_abs_grad", "mean_abs_grad", "variance", "all"))
+  assert_single_pos_int(patch_size, zero_allowed = FALSE)
+  assert_leq(patch_size, 5)
+  if (!is.null(quantiles)) {
+    assert_vector_bounded(quantiles)
+  }
+  assert_single_logical(silent)
+  assert_single_logical(pb_markdown)
+  
+  # get which measures are turned on
+  if (measure == "all") {
+    measure <- c("max_abs_grad", "mean_abs_grad", "variance")
+  }
+  max_abs_grad_on <- ("max_abs_grad" %in% measure)
+  mean_abs_grad_on <- ("mean_abs_grad" %in% measure)
+  variance_on <- ("variance" %in% measure)
+  
+  # get adjacency list, taking patch size into account
+  if (patch_size == 1) {
+    adj_list <- project$maps$grid$adjacency
+  } else {
+    adj_mat <- project$maps$grid$adjacency %>% as.matrix()
+    diag(adj_mat) <- 1
+    for (i in 2:patch_size) {
+      adj_mat <- adj_mat %*% adj_mat
+    }
+    adj_list <- apply(adj_mat, 1, function(x) which(x != 0))
+  }
+  
+  # sample parameters from posterior
+  mcmc_sample <- project$model$MCMC$output %>%
+    dplyr::filter(.data$phase == "sampling") %>%
+    dplyr::select(.data$nu, .data$lambda, .data$omega) %>%
+    dplyr::sample_n(reps) %>%
+    as.list()
+  
+  # transform frequencies to continuous scale
+  data_df <- project$data$raw$genetic_data %>%
+    dplyr::filter(.data$locus %in% loci) %>%
+    transform_p_to_z()
+  
+  # get z values split by locus and grouped into matrix by allele
+  data_list <- lapply(split(data_df, data_df$locus), function(x) {
+    tidyr::pivot_wider(x, names_from = .data$site_ID, values_from = .data$z) %>%
+      dplyr::select(-.data$locus, -.data$allele) %>%
+      as.matrix() %>% t()
+  })
+  
+  # get basic dimensions
+  n_loci <- length(loci)
+  n_alleles <- mapply(ncol, data_list)
+  n_cells <- nrow(project$maps$grid$centroids)
+  total_reps <- reps * inner_reps
+  
+  # get distance between sampling sites
+  dist_11 <- as.matrix(project$data$pairwise_measures$distance)
+  
+  # get distance between prediction sites
+  grid_coords <- project$maps$grid$centroids
+  dist_22 <- get_GC_distance(grid_coords$longitude, grid_coords$latitude) %>%
+    as.matrix()
+  
+  # get distance between sampling sites and prediction sites
+  site_coords <- project$data$raw$site_data
+  dist_12 <- apply(grid_coords, 1, function(y) {
+    lonlat_to_bearing(site_coords$longitude, site_coords$latitude, y[1], y[2])$gc_dist
+  })
+  
+  # create function list
+  args_functions <- list(update_progress = update_progress)
+  
+  # create progress bars
+  pb_dummy <- txtProgressBar(0, 1, initial = NA, style = 3)
+  pb_post <- txtProgressBar(0, n_loci, initial = NA, style = 3)
+  pb_null <- txtProgressBar(0, n_loci, initial = NA, style = 3)
+  args_progress <- list(pb = pb_dummy,
+                        pb_post = pb_post,
+                        pb_null = pb_null)
+  
+  # create misc list
+  args_misc <- list(silent = TRUE,
+                    pb_markdown = TRUE)
+  
+  if (!silent) {
+    message("Drawing from posterior distribution for each locus")
+    update_progress(args_progress, "pb_post", 0, n_loci)
+  }
+  
+  # get posterior surface
+  post_max_abs_grad <- post_mean_abs_grad <- post_variance <- matrix(0, n_cells, total_reps)
+  for (locus_i in seq_along(loci)) {
+    
+    # draw from predictive distribution via efficient C++ function
+    sim_array <- predict_map_cpp(data_list[[locus_i]], mcmc_sample, dist_11, dist_12,
+                                 dist_22, project$model$parameters, inner_reps,
+                                 args_progress, args_functions, args_misc) %>%
+      abind::abind(along = 2)
+    
+    #return(sim_array)
+    
+    # add measures to wombling posterior
+    for (i in 1:n_cells) {
+      adjacents <- adj_list[[i]]
+      for (j in 1:n_alleles[locus_i]) {
+        if (max_abs_grad_on || mean_abs_grad_on) {
+          grad <- sweep(sim_array[adjacents,,j,drop = FALSE], 2, sim_array[i,,j], "-") %>% abs()
+          if (max_abs_grad_on) {
+            max_grad <- apply(grad, 2, max)
+            post_max_abs_grad[i,] <- post_max_abs_grad[i,] + max_grad
+          }
+          if (mean_abs_grad_on) {
+            mean_grad <- apply(grad, 2, mean)
+            post_mean_abs_grad[i,] <- post_mean_abs_grad[i,] + mean_grad
+          }
+        }
+        if (variance_on) {
+          post_variance[i,] <- post_variance[i,] + apply(sim_array[adjacents,,j,drop = FALSE], 2, var)
+        }
+      }
+    }
+    
+    if (!silent) {
+      update_progress(args_progress, "pb_post", locus_i, n_loci)
+    }
+    
+  }  # end loop over loci
+  
+  if (!silent) {
+    message("Drawing from null distribution for each locus")
+    update_progress(args_progress, "pb_null", 0, n_loci)
+  }
+  
+  # get null surface
+  null_max_abs_grad <- null_mean_abs_grad <- null_variance <- matrix(0, n_cells, total_reps)
+  for (locus_i in seq_along(loci)) {
+    
+    # draw from null distribution via efficient C++ function
+    sim_array <- null_map_cpp(data_list[[locus_i]], mcmc_sample, dist_11, dist_22,
+                               project$model$parameters, inner_reps,
+                               args_progress, args_functions, args_misc) %>%
+      abind::abind(along = 2)
+    
+    #return(sim_array)
+    
+    # add measures to wombling null
+    for (i in 1:n_cells) {
+      adjacents <- adj_list[[i]]
+      for (j in 1:n_alleles[locus_i]) {
+        if (max_abs_grad_on || mean_abs_grad_on) {
+          grad <- sweep(sim_array[adjacents,,j,drop = FALSE], 2, sim_array[i,,j], "-") %>% abs()
+          if (max_abs_grad_on) {
+            max_grad <- apply(grad, 2, max)
+            null_max_abs_grad[i,] <- null_max_abs_grad[i,] + max_grad
+          }
+          if (mean_abs_grad_on) {
+            mean_grad <- apply(grad, 2, mean)
+            null_mean_abs_grad[i,] <- null_mean_abs_grad[i,] + mean_grad
+          }
+        }
+        if (variance_on) {
+          null_variance[i,] <- null_variance[i,] + apply(sim_array[adjacents,,j,drop = FALSE], 2, var)
+        }
+      }
+    }
+    
+    if (!silent) {
+      update_progress(args_progress, "pb_null", locus_i, n_loci)
+    }
+    
+  }  # end loop over loci
+  
+  if (FALSE) {
+    tmp_00 <- null_variance
+    tmp_01 <- post_variance
+    null_s = get_summaries(tmp_00 / sum(n_alleles), quantiles = quantiles)
+    
+    tmp1 <- apply(tmp_00 / sum(n_alleles), 2, function(x) {
+      (x - null_s$mean) / null_s$sd
+    })
+    tmp2 <- apply(tmp_01 / sum(n_alleles), 2, function(x) {
+      (x - null_s$mean) / null_s$sd
+    })
+    tmp3 <- rep(NA, n_cells)
+    for (i in 1:n_cells) {
+      adjacents <- adj_list[[i]]
+      s1 <- colSums(tmp1[adjacents,,drop = FALSE])
+      s2 <- colSums(tmp2[adjacents,,drop = FALSE])
+      tmp3[i] <- mean(s2 > s1)
+    }
+    
+    plot(tmp3, ylim = c(0,1))
+    plot(myproj$maps$grid$polygons, col = bobfunctions2::smooth_cols(tmp3))
+    
+    percentile_rank = rowMeans(tmp_01 > tmp_00)
+    plot(percentile_rank, ylim = c(0,1))
+    plot(myproj$maps$grid$polygons, col = bobfunctions2::smooth_cols(percentile_rank))
+  }
+  
+  # get summaries and add to project
+  if (max_abs_grad_on) {
+    project$Wombling$max_abs_grad <- list(systemic_map = get_summaries(post_max_abs_grad / sum(n_alleles), quantiles = quantiles),
+                                          null_map = get_summaries(null_max_abs_grad / sum(n_alleles), quantiles = quantiles),
+                                          percentile_rank = rowMeans(post_max_abs_grad > null_max_abs_grad) * 100)
+  }
+  if (mean_abs_grad_on) {
+    project$Wombling$mean_abs_grad <- list(systemic_map = get_summaries(post_mean_abs_grad / sum(n_alleles), quantiles = quantiles),
+                                           null_map = get_summaries(null_mean_abs_grad / sum(n_alleles), quantiles = quantiles),
+                                           percentile_rank = rowMeans(post_mean_abs_grad > null_mean_abs_grad) * 100)
+  }
+  if (variance_on) {
+    project$Wombling$variance <- list(systemic_map = get_summaries(post_variance / sum(n_alleles), quantiles = quantiles),
+                                      null_map = get_summaries(null_variance / sum(n_alleles), quantiles = quantiles),
+                                      percentile_rank = rowMeans(post_variance > null_variance) * 100)
+  }
+  
+  
+  return(project)
+}
+
+#------------------------------------------------
+#' @title TODO
+#'
+#' @description TODO
+#'
+#' @param project TODO
+#' @param test_tail TODO
+#' @param FDR TODO
+#' @param silent TODO
+#'
+#' @export
+
+Wombling_get_significant <- function(project, measure = "all", test_tail = "both",
+                                     FDR = 0.05, silent = FALSE) {
+  
+  # check project
+  assert_class(project, "genescaper_project")
+  assert_single_string(measure)
+  assert_in(measure, c("max_abs_grad", "mean_abs_grad", "variance", "all"))
+  assert_single_string(test_tail)
+  assert_in(test_tail, c("left", "right", "both"))
+  assert_single_bounded(FDR)
+  assert_single_logical(silent)
+  
+  if (!silent) {
+    message("Calculating significance")
+  }
+  
+  # loop through measures
+  if (measure == "all") {
+    measure <- c("max_abs_grad", "mean_abs_grad", "variance")
+  }
+  for (i in seq_along(measure)) {
+    
+    # get results into dataframe
+    df_res <- data.frame(cell = seq_along(project$maps$grid$polygons),
+                         prop = project$Wombling[[measure[i]]]$percentile_rank / 100)
+    
+    # calculate p-values
+    if (test_tail == "left") {
+      df_res$p <- df_res$prop
+    } else if (test_tail == "right") {
+      df_res$p <- 1.0 - df_res$prop
+    } else if (test_tail == "both") {
+      df_res$p <- ifelse(df_res$prop < 0.5, 2*df_res$prop, 2*(1 - df_res$prop))
+    }
+    
+    # Bejamini and Yekutieli (2001) method for identifying significant results
+    # while fixing the false descovery rate
+    df_res$direction <- df_res$prop - 0.5
+    which_signif <- Bejamini_Yekutieli(df_res, FDR)
+    
+    # add to project
+    project$Wombling[[measure[i]]]$significance <- which_signif
+  }
   
   return(project)
 }

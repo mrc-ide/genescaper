@@ -8,7 +8,8 @@ GeoMAPI_get_significant(
   project,
   test_tail = "both",
   FDR = 0.05,
-  min_coverage = 10
+  min_coverage = 10,
+  silent = FALSE
 )
 }
 \arguments{
@@ -24,6 +25,8 @@ identified as significant is actually a false positive.}
 
 \item{min_coverage}{minimum coverage (number of edges assigned to a cell)
 for it to be included in the final result.}
+
+\item{silent}{TODO}
 }
 \description{
 Given a completed GeoMAPI analysis, identify which cells are

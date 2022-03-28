@@ -10,10 +10,10 @@ define_model(
   mu_scale = 1,
   sigsq_mean = 1,
   sigsq_var = 1,
-  lambda_mean = 5,
-  lambda_var = 10,
   nu_shape1 = 1,
-  nu_shape2 = 1
+  nu_shape2 = 1,
+  lambda_mean = 5,
+  lambda_var = 10
 )
 }
 \arguments{
@@ -28,13 +28,13 @@ define_model(
 
 \item{sigsq_var}{TODO}
 
-\item{lambda_mean}{TODO}
-
-\item{lambda_var}{TODO}
-
 \item{nu_shape1}{TODO}
 
 \item{nu_shape2}{TODO}
+
+\item{lambda_mean}{TODO}
+
+\item{lambda_var}{TODO}
 }
 \description{
 TODO

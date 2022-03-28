@@ -5,12 +5,12 @@ predict_map_cpp <- function(data, mcmc_sample, dist_11, dist_12, dist_22, params
     .Call(`_genescaper_predict_map_cpp`, data, mcmc_sample, dist_11, dist_12, dist_22, params, inner_reps, args_progress, args_functions, args_misc)
 }
 
-get_mean_pairwise_Gst_cpp <- function(freq_list) {
-    .Call(`_genescaper_get_mean_pairwise_Gst_cpp`, freq_list)
+null_map_cpp <- function(data, mcmc_sample, dist_11, dist_22, params, inner_reps, args_progress, args_functions, args_misc) {
+    .Call(`_genescaper_null_map_cpp`, data, mcmc_sample, dist_11, dist_22, params, inner_reps, args_progress, args_functions, args_misc)
 }
 
-predict_pairwise_Gst_cpp <- function(data_list, mcmc_sample, dist_11, params, inner_reps, args_progress, args_functions, args_misc) {
-    .Call(`_genescaper_predict_pairwise_Gst_cpp`, data_list, mcmc_sample, dist_11, params, inner_reps, args_progress, args_functions, args_misc)
+null_site_cpp <- function(data, mcmc_sample, dist_11, params, inner_reps, args_progress, args_functions, args_misc) {
+    .Call(`_genescaper_null_site_cpp`, data, mcmc_sample, dist_11, params, inner_reps, args_progress, args_functions, args_misc)
 }
 
 GeoMAPI_assign_edges_cpp <- function(args, args_functions, args_progress, dist_11) {

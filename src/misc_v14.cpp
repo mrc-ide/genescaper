@@ -1,5 +1,5 @@
 
-#include "misc_v13.h"
+#include "misc_v14.h"
 
 #include <math.h>
 #include <fstream>
@@ -621,12 +621,12 @@ void update_progress_cpp(Rcpp::List args_progress, Rcpp::Function update_progres
                          string pb_name, int i, int max_i, bool display_updates) {
   if (i == 0) {
     update_progress_R(args_progress, pb_name, 0, max_i);
-  } else if ((i + 1) == max_i) {
-    update_progress_R(args_progress, pb_name, i + 1, max_i);
+  } else if (i == max_i) {
+    update_progress_R(args_progress, pb_name, i, max_i);
   } else {
     int remainder = i % int(ceil(double(max_i) / 100));
     if (remainder == 0 && display_updates) {
-      update_progress_R(args_progress, pb_name, i + 1, max_i);
+      update_progress_R(args_progress, pb_name, i, max_i);
     }
   }
 }

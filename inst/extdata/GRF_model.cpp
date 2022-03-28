@@ -2,6 +2,19 @@
 using namespace std;
 
 //------------------------------------------------
+// helper function for printing a single value or series of values
+template<typename TYPE>
+void print(TYPE x) {
+  Rcpp::Rcout << x << "\n";
+}
+
+template<typename TYPE, typename... Args>
+void print(TYPE first, Args... args) {
+  Rcpp::Rcout << first << " ";
+  print(args...);
+}
+
+//------------------------------------------------
 // density of gamma(shape,rate) distribution
 double dgamma1(double x, double shape, double rate, bool return_log) {
   return(R::dgamma(x, shape, 1.0 / rate, return_log));
@@ -121,68 +134,88 @@ TYPE matrix_sum(vector<vector<TYPE>> x) {
 SEXP loglike(Rcpp::NumericVector params, Rcpp::List data, Rcpp::List misc) {
   
   // get model parameters
+  double nu = params["nu"];
   double log_lambda = params["log_lambda"];
   double lambda = std::exp(log_lambda);
   double inv_lambda = 1.0 / lambda;
-  double nu = params["nu"];
+  double omega = params["omega"];
+  double gamma = params["gamma"];
   
   // get fixed parameters
   double mu_mean = misc["mu_mean"];
-  double mu_scale = misc["mu_scale"];
+  //double mu_scale = misc["mu_scale"];
   double sigsq_mean = misc["sigsq_mean"];
   double sigsq_var = misc["sigsq_var"];
-  double dist_power = 1.0;
-  
+  /*
+  vector<double> alpha_vec = Rcpp::as<vector<double>>(misc["alpha"]);
+  vector<double> beta_vec = Rcpp::as<vector<double>>(misc["beta"]);
+  vector<double> phi_vec = Rcpp::as<vector<double>>(misc["phi"]);
+  vector<double> gamma_vec = Rcpp::as<vector<double>>(misc["gamma"]);
+  */
   // reparameterise for convenience
   double phi_0 = mu_mean;
-  double gamma_0 = 1.0 / mu_scale;
+  //double gamma_0 = 1.0 / mu_scale;
   double alpha_0 = sigsq_mean * sigsq_mean / sigsq_var + 2.0;
   double beta_0 = sigsq_mean * (alpha_0 - 1.0);
+  
+  alpha_0 = 0.01;
+  beta_0 = 0.01;
+  phi_0 = 0.0;
+  //gamma_0 = 0.5;
   
   // get distance matrix between all sites
   Rcpp::NumericMatrix site_dist = misc["site_dist"];
   int n_site = misc["n_site"];
   
-  // create correlation matrix
-  vector<vector<double>> R(n_site, vector<double>(n_site, 1.0));
+  // create spatial kernel. Note, this has 1s on the diagonal
+  vector<vector<double>> K(n_site, vector<double>(n_site, 1.0));
   for (int i = 0; i < (n_site - 1); ++i) {
     for (int j = (i + 1); j < n_site; ++j) {
       double d = site_dist(i, j);
-      R[i][j] = nu * exp(-pow(d * inv_lambda, dist_power));
-      R[j][i] = R[i][j];
+      K[i][j] = nu * exp(-pow(d * inv_lambda, omega));
+      K[j][i] = K[i][j];
     }
   }
   
-  // calculate intermediate quantities that apply to all combos
-  vector<vector<double>> R_inv = inverse(R);
-  double R_inv_sum = matrix_sum(R_inv);
-  vector<vector<double>> R_chol(n_site, vector<double>(n_site));
-  cholesky(R_chol, R);
-  double R_logdet = log_determinant(R_chol);
-  double gamma_1 = gamma_0 + R_inv_sum;
-  double alpha_1 = alpha_0 + (double)n_site / 2.0;
+  // calculate intermediate quantities that apply to all locus-allele
+  // combinations
+  vector<vector<double>> K_inv = inverse(K);
+  double K_inv_sum = matrix_sum(K_inv);
+  vector<vector<double>> K_chol(n_site, vector<double>(n_site));
+  cholesky(K_chol, K);
+  double K_logdet = log_determinant(K_chol);
   
-  // sum loglikelihood over all locus&allele combos
+  // sum loglikelihood over all locus-allele combinations
   double ret = 0.0;
   for (int combo_i = 0; combo_i < data.size(); ++combo_i) {
     
     // get data
     vector<double> z = Rcpp::as< vector<double> >(data[combo_i]);
     
-    // calculate intermediate quantities that apply to this combo
-    double R_inv_zsum = 0.0;
-    double R_inv_zsq = 0.0;
+    // calculate intermediate quantities that apply to this combination
+    double K_inv_zsum = 0.0;
+    double K_inv_zsq = 0.0;
     for (int i = 0; i < n_site; ++i) {
       for (int j = 0; j < n_site; ++j) {
-        R_inv_zsum += z[i] * R_inv[i][j];
-        R_inv_zsq += z[i] * z[j] * R_inv[i][j];
+        K_inv_zsum += z[i] * K_inv[i][j];
+        K_inv_zsq += z[i] * z[j] * K_inv[i][j];
       }
     }
-    double phi_1 = (gamma_0 * phi_0 + R_inv_zsum) / gamma_1;
-    double beta_1 = beta_0 + 0.5*(gamma_0*phi_0*phi_0 - gamma_1*phi_1*phi_1 + R_inv_zsq);
+    
+    double gamma_1 = gamma + K_inv_sum;
+    double alpha_1 = alpha_0 + (double)n_site / 2.0;
+    double phi_1 = (gamma * phi_0 + K_inv_zsum) / gamma_1;
+    double beta_1 = beta_0 + 0.5*(gamma*phi_0*phi_0 - gamma_1*phi_1*phi_1 + K_inv_zsq);
+    /*
+    double gamma_1 = gamma_vec[combo_i] + K_inv_sum;
+    double alpha_1 = alpha_vec[combo_i] + (double)n_site / 2.0;
+    double phi_1 = (gamma_vec[combo_i] * phi_vec[combo_i] + K_inv_zsum) / gamma_1;
+    double beta_1 = beta_vec[combo_i] + 0.5*(gamma_vec[combo_i]*phi_vec[combo_i]*phi_vec[combo_i] - gamma_1*phi_1*phi_1 + K_inv_zsq);
+    */
     
     // calculate multivariate normal likelihood
-    ret += alpha_0*log(beta_0) - alpha_1*log(beta_1) + lgamma(alpha_1) - lgamma(alpha_0) + 0.5*log(gamma_0) -0.5*log(gamma_1) - 0.5*R_logdet;
+    ret += alpha_0*log(beta_0) - alpha_1*log(beta_1) + lgamma(alpha_1) - lgamma(alpha_0) + 0.5*log(gamma) -0.5*log(gamma_1) - 0.5*K_logdet;
+    //ret += alpha_vec[combo_i]*log(beta_vec[combo_i]) - alpha_1*log(beta_1) + lgamma(alpha_1) - lgamma(alpha_vec[combo_i]) + 0.5*log(gamma_vec[combo_i]) -0.5*log(gamma_1) - 0.5*K_logdet;
     
   }
   
@@ -195,14 +228,15 @@ SEXP loglike(Rcpp::NumericVector params, Rcpp::List data, Rcpp::List misc) {
 SEXP logprior(Rcpp::NumericVector params, Rcpp::List misc) {
   
   // get parameters
+  double nu = params["nu"];
   double log_lambda = params["log_lambda"];
   double lambda = exp(log_lambda);
-  double nu = params["nu"];
+  //double omega = params["omega"]; // (uniform prior adds nothing to ret)
   
-  double lambda_mean = misc["lambda_mean"];
-  double lambda_var = misc["lambda_var"];
   double nu_shape1 = misc["nu_shape1"];
   double nu_shape2 = misc["nu_shape2"];
+  double lambda_mean = misc["lambda_mean"];
+  double lambda_var = misc["lambda_var"];
   
   // reparameterise for convenience
   double lambda_shape = lambda_mean * lambda_mean / lambda_var;
@@ -211,6 +245,7 @@ SEXP logprior(Rcpp::NumericVector params, Rcpp::List misc) {
   // calculate logprior
   double ret = dgamma1(lambda, lambda_shape, lambda_rate, true) +
     dbeta1(nu, nu_shape1, nu_shape2, true);
+  //double ret = 0;
   
   // add adjustment factors for transformations
   ret += log_lambda;

@@ -1,193 +1,5 @@
 
 #------------------------------------------------
-#' @title Get distance between points taking into account barriers
-#'
-#' @description Given a set of lon/lat coordinates and a list of barriers in the
-#'   form of polygons, returns the "effective distance" between points, which is
-#'   calculated as the great-circle distance with a penalty applied if the line
-#'   intersects a barrier. The exact way in which barriers modify distances can
-#'   be varied (see \code{barrier_method} argument).
-#'
-#' @param node_lon,node_lat longitudes and latitudes of nodes.
-#' @param barrier_list list of polygons representing barriers. Each element of
-#'   the list must be a dataframe with columns \code{longitude} and
-#'   \code{latitude} specifying the coordinates of points that make up the
-#'   polygon. Polygons must be complete rings, meaning the final row of the
-#'   dataframe must equal the first row.
-#' @param barrier_penalty penalty values of each barrier. If a single value is
-#'   provided then this value will be used for all barriers.
-#' @param barrier_method the method by which penalties are applied:
-#'   \enumerate{
-#'     \item{compare pairwise lines to barriers. If the line intersects then add
-#'     a fixed \code{barrier_penalty} to the spatial distance.}
-#'     \item{compare pairwise lines to barriers. Calculate the intersection of
-#'     the two, multiply this by the \code{barrier_penalty} and add to the
-#'     spatial distance. For example, a \code{barrier_penalty} of 1 would mean
-#'     there is double the "friction" when moving through a barrier.}
-#'     \item{compare pairwise ellipses to barriers. Calculate the intersection
-#'     area of the two, multiply this by the \code{barrier_penalty} and add to
-#'     the spatial distance.}
-#'   }
-#' @param max_barrier_range edges that are longer than this distance are
-#'   unaffected by any barriers. Makes it possible to model barriers that only
-#'   apply locally.
-#' @param eccentricity eccentricity of ellipses (only used under
-#'   \code{barrier_method = 3}).
-#' @param noise_sd standard deviation of Gaussian noise added to all distances
-#'   (after the application of barriers).
-#' @param ellipse_points number of points that make up an ellipse (only used
-#'   under \code{barrier_method = 3}).
-#'
-#' @import sf
-#' @importFrom stats dist rnorm
-#' @export
-
-get_barrier_intersect <- function(node_lon,
-                                  node_lat,
-                                  barrier_list = list(),
-                                  barrier_penalty = numeric(),
-                                  barrier_method = 1,
-                                  max_barrier_range = Inf,
-                                  eccentricity = 0.9,
-                                  noise_sd = 0,
-                                  ellipse_points = 20) {
-  
-  # check inputs
-  assert_vector_numeric(node_lon)
-  assert_vector_numeric(node_lat)
-  assert_same_length(node_lon, node_lat)
-  assert_list(barrier_list)
-  nb <- length(barrier_list)
-  if (nb > 0) {
-    for (i in 1:nb) {
-      assert_dataframe(barrier_list[[i]])
-      assert_in(c("longitude", "latitude"), names(barrier_list[[i]]))
-      assert_eq(barrier_list[[i]][1,], barrier_list[[i]][nrow(barrier_list[[i]]),], 
-                message = "barrier polygons must be closed, i.e. the last node coordinate equals the first")
-    }
-  }
-  assert_vector_numeric(barrier_penalty)
-  assert_single_pos_int(barrier_method)
-  assert_in(barrier_method, 1:3)
-  assert_single_pos(max_barrier_range, zero_allowed = TRUE)
-  assert_single_bounded(eccentricity, inclusive_left = FALSE)
-  assert_single_pos(noise_sd, zero_allowed = TRUE)
-  assert_single_pos_int(ellipse_points, zero_allowed = FALSE)
-  
-  # force barrier_penalty to vector
-  barrier_penalty <- force_vector(barrier_penalty, length(barrier_list))
-  assert_same_length(barrier_penalty, barrier_list)
-  
-  # create mask for ignoring edges greater then
-  distance_mask <- 1
-  if (is.finite(max_barrier_range)) {
-    d <- as.vector(get_GC_distance(node_lon, node_lat))
-    distance_mask <- (d < max_barrier_range)
-  }
-  
-  # apply barrier penalties
-  intersect_penalty <- 0
-  if ((nb > 0) & any(barrier_penalty != 0)) {
-    
-    # convert barrier list to st_polygon
-    poly_list <- list()
-    for (i in 1:length(barrier_list)) {
-      poly_list[[i]] <- sf::st_polygon(list(as.matrix(barrier_list[[i]])))
-    }
-    
-    # get node coordinates in matrix
-    node_mat <- cbind(node_lon, node_lat)
-    
-    # if comparing lines
-    if (barrier_method %in% c(1, 2)) {
-      
-      # create all pairwise sf_linestring between nodes
-      line_list <- list()
-      n_node <- length(node_lon)
-      i2 <- 0
-      for (i in 1:(n_node-1)) {
-        for (j in (i + 1):n_node) {
-          i2 <- i2 + 1
-          line_list[[i2]] <- sf::st_linestring(node_mat[c(i,j),])
-        }
-      }
-      
-      # convert lines and polys to st_sfc
-      line_sfc <- sf::st_sfc(line_list)
-      poly_sfc <- sf::st_sfc(poly_list)
-      
-      # get boolean intersection matrix
-      intersect_mat <- as.matrix(sf::st_intersects(line_sfc, poly_sfc))
-      
-      # convert to (great circle) length of intersection if using method 2
-      if (barrier_method == 2) {
-        intersect_mat[intersect_mat == TRUE] <- mapply(function(x) {
-          
-          # sum great circle distances of all intersection lenfths
-          if ("LINESTRING" %in% class(x)) {
-            get_GC_distance(as.matrix(x)[1,], as.matrix(x)[2,])[1]
-          } else if ("MULTILINESTRING" %in% class(x)) {
-            sum(mapply(function(y) {
-              get_GC_distance(y[1,], y[2,])[1]
-            }, x))
-          } else {
-            warning("cannot calculate distance: sfc type not recognised")
-          }
-          
-        }, sf::st_intersection(line_sfc, poly_sfc))
-      }
-    }
-    
-    # mask out edges that are beyond limit distance
-    intersect_mat <- sweep(intersect_mat, 1, distance_mask, "*")
-    
-    # if comparing ellipse
-    if (barrier_method == 3) {
-      
-      # create all pairwise ellipses between nodes
-      ell_list <- list()
-      n_node <- length(node_lon)
-      i2 <- 0
-      for (i in 1:(n_node-1)) {
-        for (j in (i+1):n_node) {
-          i2 <- i2 + 1
-          ell_df <- get_ellipse(f1 = node_mat[i,], f2 = node_mat[j,], ecc = eccentricity, n = ellipse_points)
-          ell_list[[i2]] <- sf::st_polygon(list(as.matrix(ell_df)))
-        }
-      }
-      
-      # convert ellipses and polys to st_sfc
-      ell_sfc <- sf::st_sfc(ell_list)
-      poly_sfc <- sf::st_sfc(poly_list)
-      
-      # get boolean intersection matrix
-      intersect_mat <- as.matrix(sf::st_intersects(ell_sfc, poly_sfc))
-      
-      # mask out ellipses that are beyond limit distance
-      intersect_mat <- sweep(intersect_mat, 1, distance_mask, "*")
-      
-      # convert to area of intersection
-      intersect_areas <- mapply(function(x) {
-        sf::st_area(x)
-      }, sf::st_intersection(ell_sfc, poly_sfc))
-      intersect_mat[intersect_mat == TRUE] <- intersect_areas[intersect_mat == TRUE]
-      
-    }
-    
-    # apply penalty
-    intersect_penalty <- rowSums(sweep(intersect_mat, 2, barrier_penalty, '*'))
-    
-  }  # end apply barrier penalties
-  
-  # get pairwise distance plus penalty
-  d <- get_GC_distance(node_lon, node_lat) + intersect_penalty
-  d <- d + rnorm(length(d), sd = noise_sd)
-  
-  # return matrix
-  return(as.matrix(d))
-}
-
-#------------------------------------------------
 #' @title Simulate allele frequencies from Wright-Fisher model
 #'
 #' @description Simulate Wright-Fisher evolution in a series of partially
@@ -311,4 +123,72 @@ sim_wrightfisher <- function(N, L, alleles, mu, mig_mat, t_out,
     dplyr::bind_rows()
   
   return(output_processed)
+}
+
+
+#------------------------------------------------
+#' @title TODO
+#'
+#' @description TODO
+#'   
+#' @param N TODO
+#'
+#' @export
+
+sim_GRF <- function(project, loci, alleles, nu, lambda, omega,
+                    sigsq_shape, sigsq_rate, mu_mean, gamma) {
+  
+  # check inputs
+  assert_class(project, "genescaper_project")
+  assert_single_pos_int(loci, zero_allowed = FALSE)
+  assert_single_pos_int(alleles, zero_allowed = FALSE)
+  assert_single_bounded(nu)
+  assert_single_pos(lambda, zero_allowed = FALSE)
+  assert_single_bounded(omega, left = 1, right = 2)
+  assert_single_pos(sigsq_shape, zero_allowed = FALSE)
+  assert_single_pos(sigsq_rate, zero_allowed = FALSE)
+  assert_single_numeric(mu_mean)
+  assert_single_pos(gamma, zero_allowed = FALSE)
+  
+  # define correlation matrix
+  centroids <- project$maps$grid$centroids
+  n_site <- nrow(centroids)
+  d <- get_GC_distance(centroids$longitude, centroids$latitude)
+  K <- diag(1 - nu, n_site) + nu * exp(-(d / lambda)^omega)
+  
+  # draw means and variances
+  n_sim <- loci * (alleles - 1)
+  sigsq <- 1 / rgamma(n_sim, shape = sigsq_shape, rate = sigsq_rate)
+  mu <- rnorm(n_sim, mean = mu_mean, sd = sqrt(sigsq / gamma))
+  df_params <- data.frame(locus = rep(1:loci, each = alleles - 1),
+                          allele = 1:(alleles - 1),
+                          mu = mu,
+                          sigsq = sigsq)
+  
+  # simulate z-values all in one go
+  z <- mvtnorm::rmvnorm(n_sim, sigma = K) %>%
+    sweep(1, mu, "+") %>%
+    sweep(1, sqrt(sigsq), "*")
+  #print(apply(z, 1, mean))
+  #print(apply(z, 1, var))
+  
+  # apply transformation to each locus
+  z_list <- split(as.data.frame(z), f = df_params$locus)
+  sim_wide <- mapply(function(i) {
+    ret <- transform_z_to_p(t(z_list[[i]]))
+    colnames(ret) <- sprintf("allele_%s", seq_len(ncol(ret)))
+    ret %>%
+      as.data.frame() %>%
+      mutate(site_ID = seq_len(nrow(ret)),
+             locus = i)
+  }, seq_along(z_list), SIMPLIFY = FALSE) %>%
+    bind_rows()
+  
+  # get into long format
+  sim_long <- sim_wide %>%
+    pivot_longer(-c(site_ID, locus), names_to = "allele", values_to = "freq") %>%
+    mutate(allele = as.numeric(as.factor(allele)))
+  
+  return(list(data = sim_long,
+              params = df_params))
 }
