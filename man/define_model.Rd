@@ -6,35 +6,23 @@
 \usage{
 define_model(
   project,
-  mu_mean = 0,
-  mu_scale = 1,
-  sigsq_mean = 1,
-  sigsq_var = 1,
   nu_shape1 = 1,
   nu_shape2 = 1,
-  lambda_mean = 5,
-  lambda_var = 10
+  lambda_shape = 1,
+  lambda_rate = NULL
 )
 }
 \arguments{
 \item{project}{a genescaper project, as produced by the
 \code{genescaper_project()} function.}
 
-\item{mu_mean}{TODO}
-
-\item{mu_scale}{TODO}
-
-\item{sigsq_mean}{TODO}
-
-\item{sigsq_var}{TODO}
-
 \item{nu_shape1}{TODO}
 
 \item{nu_shape2}{TODO}
 
-\item{lambda_mean}{TODO}
+\item{lambda_shape}{TODO}
 
-\item{lambda_var}{TODO}
+\item{lambda_rate}{TODO}
 }
 \description{
 TODO

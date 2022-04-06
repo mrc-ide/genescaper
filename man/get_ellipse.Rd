@@ -22,5 +22,5 @@ would lead to an infinitely large circle.}
 \item{n}{number of points in polygon.}
 }
 \description{
-TODOalculate ellipse polygon coordinates from foci and eccentricity.
+TODO calculate ellipse polygon coordinates from foci and eccentricity.
 }

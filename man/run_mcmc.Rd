@@ -4,11 +4,13 @@
 \alias{run_mcmc}
 \title{Run MCMC}
 \usage{
-run_mcmc(project, ...)
+run_mcmc(project, chains, ...)
 }
 \arguments{
 \item{project}{a genescaper project, as produced by the
 \code{genescaper_project()} function.}
+
+\item{chains}{TODO}
 
 \item{...}{additional parameters that will be passed to
 \code{drjacoby::run_mcmc()}.}

@@ -30,19 +30,13 @@ arma::field<arma::cube> predict_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
   vector<double> nu_draws = rcpp_to_vector_double(mcmc_sample["nu"]);
   vector<double> lambda_draws = rcpp_to_vector_double(mcmc_sample["lambda"]);
   vector<double> omega_draws = rcpp_to_vector_double(mcmc_sample["omega"]);
+  vector<double> gamma_draws = rcpp_to_vector_double(mcmc_sample["gamma"]);
   int reps = nu_draws.size();
   
-  // get fixed model parameters
-  double mu_mean = rcpp_to_double(params["mu_mean"]);
-  double mu_scale = rcpp_to_double(params["mu_scale"]);
-  double sigsq_mean = rcpp_to_double(params["sigsq_mean"]);
-  double sigsq_var = rcpp_to_double(params["sigsq_var"]);
-  
-  // reparameterise for convenience
-  double phi_0 = mu_mean;
-  double gamma_0 = 1.0 / mu_scale;
-  double alpha_0 = sigsq_mean * sigsq_mean / sigsq_var + 2.0;
-  double beta_0 = sigsq_mean * (alpha_0 - 1.0);
+  // define fixed model parameters
+  double phi_0 = 0.0;
+  double alpha_0 = 0.01;
+  double beta_0 = 0.01;
   
   // initialise intermediate objects
   arma::vec ones_pred = arma::ones(n_pred, 1);
@@ -63,6 +57,7 @@ arma::field<arma::cube> predict_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
     double nu = nu_draws[rep_i];
     double inv_lambda = 1.0 / lambda_draws[rep_i];
     double omega = omega_draws[rep_i];
+    double gamma = gamma_draws[rep_i];
     
     // allow user to exit on escape
     Rcpp::checkUserInterrupt();
@@ -89,7 +84,7 @@ arma::field<arma::cube> predict_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
       
       // draw mu and sigsq from posterior
       double sigsq, mu;
-      draw_sigsq_mu(sigsq, mu, gamma_0, phi_0, alpha_0, beta_0, n_site, K_11_inv,
+      draw_sigsq_mu(sigsq, mu, gamma, phi_0, alpha_0, beta_0, n_site, K_11_inv,
                     z_obs, ones_site);
       
       // draw y from posterior
@@ -133,21 +128,7 @@ void draw_sigsq_mu(double &sigsq, double &mu, double gamma_0, double phi_0,
   // draw mu and sigsq
   sigsq = 1.0 / rgamma1(alpha_1, beta_1);
   mu = rnorm1(phi_1, sigsq / gamma_1);
-  /*
-  print("\nDrawing sigsq and mu:");
-  print("gamma", gamma_0, gamma_1);
-  print("phi", phi_0, phi_1);
-  print("alpha", alpha_0, alpha_1);
-  print("beta", beta_0, beta_1);
-  print("mu", mu);
-  print("sigsq", sigsq);
-  print("mat_sum", arma::accu(K_11_inv));
-  print("mat_z", arma::as_scalar(z.t() * K_11_inv * ones_site));
-  print("mat_zsq", arma::as_scalar(z.t() * K_11_inv * z));
-  print("expected sigsq", beta_1 / (alpha_1 - 1));
-  int n = z.size();
-  print("expected sigsq independent", (arma::accu(z % z) - arma::accu(z) * arma::accu(z) / double(n)) / double(n - 1) );
-  */
+  
 }
 
 //------------------------------------------------
@@ -229,19 +210,13 @@ arma::field<arma::cube> null_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
   vector<double> omega_draws = rcpp_to_vector_double(mcmc_sample["omega"]);
   vector<double> lambda_draws = rcpp_to_vector_double(mcmc_sample["lambda"]);
   vector<double> nu_draws = rcpp_to_vector_double(mcmc_sample["nu"]);
+  vector<double> gamma_draws = rcpp_to_vector_double(mcmc_sample["gamma"]);
   int reps = nu_draws.size();
   
-  // get fixed model parameters
-  double mu_mean = rcpp_to_double(params["mu_mean"]);
-  double mu_scale = rcpp_to_double(params["mu_scale"]);
-  double sigsq_mean = rcpp_to_double(params["sigsq_mean"]);
-  double sigsq_var = rcpp_to_double(params["sigsq_var"]);
-  
-  // reparameterise for convenience
-  double phi_0 = mu_mean;
-  double gamma_0 = 1.0 / mu_scale;
-  double alpha_0 = sigsq_mean * sigsq_mean / sigsq_var + 2.0;
-  double beta_0 = sigsq_mean * (alpha_0 - 1.0);
+  // define fixed model parameters
+  double phi_0 = 0;
+  double alpha_0 = 0.01;
+  double beta_0 = 0.01;
   
   // initialise intermediate objects
   arma::vec ones_pred = arma::ones(n_pred, 1);
@@ -261,6 +236,7 @@ arma::field<arma::cube> null_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
     double nu = nu_draws[rep_i];
     double inv_lambda = 1.0 / lambda_draws[rep_i];
     double omega = omega_draws[rep_i];
+    double gamma = gamma_draws[rep_i];
     
     // allow user to exit on escape
     Rcpp::checkUserInterrupt();
@@ -284,7 +260,7 @@ arma::field<arma::cube> null_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
       
       // draw mu and sigsq from posterior
       double sigsq, mu;
-      draw_sigsq_mu(sigsq, mu, gamma_0, phi_0, alpha_0, beta_0, n_site, K_11_inv,
+      draw_sigsq_mu(sigsq, mu, gamma, phi_0, alpha_0, beta_0, n_site, K_11_inv,
                     z_obs, ones_site);
       
       // draw z from null distribution
@@ -322,8 +298,7 @@ void draw_z_null(arma::mat &ret, arma::mat &K_22, double mu, double sigsq,
 
 //------------------------------------------------
 // draw allele frequencies at site locations from null distribution
-//arma::field<arma::cube> null_site_cpp(arma::mat data, Rcpp::List mcmc_sample,
-Rcpp::List null_site_cpp(arma::mat data, Rcpp::List mcmc_sample,
+arma::field<arma::cube> null_site_cpp(arma::mat data, Rcpp::List mcmc_sample,
                                       arma::mat dist_11, Rcpp::List params,
                                       int inner_reps, Rcpp::List args_progress,
                                       Rcpp::List args_functions, Rcpp::List args_misc) {
@@ -343,23 +318,13 @@ Rcpp::List null_site_cpp(arma::mat data, Rcpp::List mcmc_sample,
   vector<double> omega_draws = rcpp_to_vector_double(mcmc_sample["omega"]);
   vector<double> lambda_draws = rcpp_to_vector_double(mcmc_sample["lambda"]);
   vector<double> nu_draws = rcpp_to_vector_double(mcmc_sample["nu"]);
+  vector<double> gamma_draws = rcpp_to_vector_double(mcmc_sample["gamma"]);
   int reps = nu_draws.size();
   
-  // get fixed model parameters
-  double mu_mean = rcpp_to_double(params["mu_mean"]);
-  double mu_scale = rcpp_to_double(params["mu_scale"]);
-  double sigsq_mean = rcpp_to_double(params["sigsq_mean"]);
-  double sigsq_var = rcpp_to_double(params["sigsq_var"]);
-  
-  // reparameterise for convenience
-  double phi_0 = mu_mean;
-  double gamma_0 = 1.0 / mu_scale;
-  double alpha_0 = sigsq_mean * sigsq_mean / sigsq_var + 2.0;
-  double beta_0 = sigsq_mean * (alpha_0 - 1.0);
-  
-  alpha_0 = 0.5;
-  beta_0 = 0.0;
-  gamma_0 = 0.0;
+  // define fixed model parameters
+  double phi_0 = 0;
+  double alpha_0 = 0.01;
+  double beta_0 = 0.01;
   
   // initialise intermediate objects
   arma::vec ones_site = arma::ones(n_site, 1);
@@ -373,17 +338,12 @@ Rcpp::List null_site_cpp(arma::mat data, Rcpp::List mcmc_sample,
     update_progress_cpp(args_progress, update_progress, "pb", 0, reps, !pb_markdown);
   }
   
-  vector<double> mu_keep(alleles);
-  vector<double> sig_keep(alleles);
-  
   // loop through MCMC draws
   for (int rep_i = 0; rep_i < reps; ++rep_i) {
     double nu = nu_draws[rep_i];
     double inv_lambda = 1.0 / lambda_draws[rep_i];
     double omega = omega_draws[rep_i];
-    
-    // TODO - remove
-    //nu = 0;
+    double gamma = gamma_draws[rep_i];
     
     // allow user to exit on escape
     Rcpp::checkUserInterrupt();
@@ -403,12 +363,8 @@ Rcpp::List null_site_cpp(arma::mat data, Rcpp::List mcmc_sample,
       
       // draw mu and sigsq from posterior
       double sigsq, mu;
-      draw_sigsq_mu(sigsq, mu, gamma_0, phi_0, alpha_0, beta_0, n_site, K_11_inv,
+      draw_sigsq_mu(sigsq, mu, gamma, phi_0, alpha_0, beta_0, n_site, K_11_inv,
                     z_obs, ones_site);
-      
-      //print(rep_i, allele_i, mu, sigsq);
-      mu_keep[allele_i] += mu / double(reps);
-      sig_keep[allele_i] += pow(sigsq, 0.5) / double(reps);
       
       // draw z from null distribution
       draw_z_null(z_cube.slice(allele_i), K_11, mu, sigsq, ones_site, inner_reps);
@@ -429,15 +385,8 @@ Rcpp::List null_site_cpp(arma::mat data, Rcpp::List mcmc_sample,
     
   }  // end of rep_i loop
   
-  //print_vector(mu_keep);
-  //print_vector(sigsq_keep);
-  
   // return 
-  //return ret;
-  
-  return Rcpp::List::create(Rcpp::Named("raw") = ret,
-                            Rcpp::Named("mu") = mu_keep,
-                            Rcpp::Named("sig") = sig_keep);
+  return ret;
 }
 
 //------------------------------------------------

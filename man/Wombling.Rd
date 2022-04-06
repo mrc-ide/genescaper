@@ -26,6 +26,12 @@ Wombling(
 
 \item{inner_reps}{TODO}
 
+\item{measure}{TODO}
+
+\item{patch_size}{TODO}
+
+\item{quantiles}{TODO}
+
 \item{silent}{TODO}
 
 \item{pb_markdown}{TODO}

@@ -131,7 +131,19 @@ sim_wrightfisher <- function(N, L, alleles, mu, mig_mat, t_out,
 #'
 #' @description TODO
 #'   
-#' @param N TODO
+#' @param project a genescaper project, as produced by the
+#'   \code{genescaper_project()} function. The project must have a grid already
+#'   defined (see \code{?create_hex_grid}) as this grid will be used in
+#'   simulation.
+#' @param loci number of loci (assumed independent).
+#' @param alleles number of alleles, assumed to be the same over all loci.
+#' @param nu,lambda,omega the values of the model parameters used in simulation.
+#'   These parameters together specify the spatial autocorrelation function.
+#' @param sigsq_shape,sigsq_rate,mu_mean,gamma parameters of the
+#'   normal-inverse-gamma prior on the mean and variance of transformed allele
+#'   frequencies.
+#'
+#' @importFrom stats rnorm
 #'
 #' @export
 
@@ -169,8 +181,6 @@ sim_GRF <- function(project, loci, alleles, nu, lambda, omega,
   z <- mvtnorm::rmvnorm(n_sim, sigma = K) %>%
     sweep(1, mu, "+") %>%
     sweep(1, sqrt(sigsq), "*")
-  #print(apply(z, 1, mean))
-  #print(apply(z, 1, var))
   
   # apply transformation to each locus
   z_list <- split(as.data.frame(z), f = df_params$locus)
@@ -179,15 +189,15 @@ sim_GRF <- function(project, loci, alleles, nu, lambda, omega,
     colnames(ret) <- sprintf("allele_%s", seq_len(ncol(ret)))
     ret %>%
       as.data.frame() %>%
-      mutate(site_ID = seq_len(nrow(ret)),
-             locus = i)
+      dplyr::mutate(site_ID = seq_len(nrow(ret)),
+                    locus = i)
   }, seq_along(z_list), SIMPLIFY = FALSE) %>%
-    bind_rows()
+    dplyr::bind_rows()
   
   # get into long format
   sim_long <- sim_wide %>%
-    pivot_longer(-c(site_ID, locus), names_to = "allele", values_to = "freq") %>%
-    mutate(allele = as.numeric(as.factor(allele)))
+    tidyr::pivot_longer(-c(.data$site_ID, .data$locus), names_to = "allele", values_to = "freq") %>%
+    dplyr::mutate(allele = as.numeric(as.factor(.data$allele)))
   
   return(list(data = sim_long,
               params = df_params))

@@ -32,7 +32,8 @@ Imports:
     ggplot2,
     purrr,
     abind,
-    tidyr
+    tidyr,
+    mvtnorm
 Remotes: mrc-ide/drjacoby@v1.5.2
 SystemRequirements: C++11
 Suggests: 

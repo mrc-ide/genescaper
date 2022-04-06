@@ -41,12 +41,10 @@ arma::field<arma::cube> null_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
 
 //------------------------------------------------
 // [[Rcpp::export]]
-Rcpp::List null_site_cpp(arma::mat data, Rcpp::List mcmc_sample,
+arma::field<arma::cube> null_site_cpp(arma::mat data, Rcpp::List mcmc_sample,
                                       arma::mat dist_11, Rcpp::List params,
                                       int inner_reps, Rcpp::List args_progress,
                                       Rcpp::List args_functions, Rcpp::List args_misc);
-
-//arma::field<arma::cube> null_site_cpp(arma::mat data, Rcpp::List mcmc_sample,
 
 //------------------------------------------------
 // [[Rcpp::export]]

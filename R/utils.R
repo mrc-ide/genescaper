@@ -12,12 +12,32 @@
 NULL
 
 #------------------------------------------------
-# density of logit-normal distribution
-#' @importFrom stats dnorm
-dlogitnorm <- function(p, raw_mu = 0.0, raw_sigsq = 1.0, return_log = TRUE) {
-  ret <- dnorm(log(p) - log(1.0 - p), mean = raw_mu, sd = sqrt(raw_sigsq), log = TRUE) - log(p) - log(1.0 - p)
-  if (!return_log) {
-    ret <- exp(ret)
+# sum logged values without underflow, i.e. do log(sum(exp(x)))
+#' @noRd
+log_sum <- function(x) {
+  if (all(is.na(x))) {
+    return(rep(NA, length(x)))
+  }
+  x_max <- max(x, na.rm = TRUE)
+  ret <- x_max + log(sum(exp(x - x_max)))
+  return(ret)
+}
+
+#------------------------------------------------
+# improved version of log_sum() that gives higher accuracy (less sensitive to
+# underflow) in situations when the largest value of x is 0, and the second
+# largest value is much more negative. For example, log_sum(c(0, -40)) returns
+# 0, whereas log_sum2(c(0, -40)) returns a small positive value.
+#' @noRd
+log_sum2 <- function(x) {
+  if (all(is.na(x))) {
+    return(rep(NA, length(x)))
+  }
+  w <- which.max(x)
+  if ((x[w] == 0) && (max(x[-w]) < -36)) {
+    ret <- sum(exp(x[-w] - x[w]))
+  } else {
+    ret <- log_sum(x)
   }
   return(ret)
 }
@@ -167,6 +187,53 @@ transform_z_to_p <- function(z) {
 }
 
 #------------------------------------------------
+# Equivalent to transform_z_to_p(), but evaluated in log space (returning
+# log(p)), and operates on a 3D array with the following dimensions: 1) demes,
+# 2) reps, 3) alleles. Uses some approximations for extreme large or small z to
+# avoid underflow issues that otherwise could result in logistic transform
+# returning 0 or 1, which should not be possible for finite z.
+#' @noRd
+transform_z_to_logp <- function(z) {
+  
+  # check inputs
+  assert_length(dim(z), 3)
+  
+  # get basic dimensions
+  n_demes <- dim(z)[1]
+  n_reps <- dim(z)[2]
+  n_alleles <- dim(z)[3]
+  
+  # log-logistic transform
+  log_q <- -log(1 + exp(-z))
+  
+  # use approximations for extreme values to avoid underflow
+  log_q[z < -100] <- z[z < -100]
+  log_q[z > 100] <- -exp(-z[z > 100])
+  
+  # apply stick-breaking transform
+  log_p <- log_q
+  for (i in 2:n_alleles) {
+    if (i == 2) {
+      log_sum_p <- log_p[,,1]
+    } else {
+      log_sum_p <- apply(log_p[,,1:(i - 1), drop = FALSE], c(1, 2), log_sum2)
+    }
+    log_stick_remaining <- log(1 - exp(log_sum_p))
+    w <- which(log_sum_p < -36)
+    log_stick_remaining[w] <- -exp(log_sum_p[w])
+    w <- which((log_sum_p < 0) & (log_sum_p > -1e-15))
+    log_stick_remaining[w] <- log(-log_sum_p[1])
+    if (i == n_alleles) {
+      log_p[,,i] <- log_stick_remaining
+    } else {
+      log_p[,,i] <- log_q[,,i] + log_stick_remaining
+    }
+  }
+  
+  return(log_p)
+}
+
+#------------------------------------------------
 # update progress bar
 # pb_list = list of progress bar objects
 # name = name of this progress bar
@@ -196,7 +263,7 @@ force_vector <- function(x, n) {
 #------------------------------------------------
 #' @title Calculate ellipse polygon coordinates from foci and eccentricity
 #'
-#' @description TODOalculate ellipse polygon coordinates from foci and eccentricity.
+#' @description TODO calculate ellipse polygon coordinates from foci and eccentricity.
 #'
 #' @param f1 x- and y-coordinates of the first focus.
 #' @param f2 x- and y-coordinates of the second focus.
@@ -274,6 +341,19 @@ calc_pairwise_Gst <- function(x) {
     J_t <- rowSums(x_bar^2)
     J_i <- rowSums(x^2)
     J_s <- 0.5 * (J_i[deme_pairs[,1]] + J_i[deme_pairs[,2]])
+    
+    # deal with underflow issues by restricting range of J_s and J_t. Note that
+    # allele frequencies of exactly 0 or 1 should not be possible under the
+    # model, therefore both J_s and J_t should be restricted to be <1. They
+    # should also be restricted to be >0 because this would require the sum of
+    # infinitely many values. Finally, it should not be possible for J_t to
+    # exceed J_s.
+    J_s[J_s < 1e-10] <- 1e-10
+    J_s[J_s > 1.0 - 1e-10] <- 1 - 1e-10
+    J_t[J_t < 1e-10] <- 1e-10
+    J_t[J_t > 1.0 - 1e-10] <- 1 - 1e-10
+    J_s[J_s < J_t] <- J_t[J_s < J_t]
+    
     Gst <- (J_s - J_t) / (1 - J_t)
     
   } else if (length(dim(x)) == 3) {
@@ -299,6 +379,19 @@ calc_pairwise_Gst <- function(x) {
       J_i <- matrix(J_i)
     }
     J_s <- 0.5 * (J_i[deme_pairs[,1],,drop = FALSE] + J_i[deme_pairs[,2],,drop = FALSE])
+    
+    # deal with underflow issues by restricting range of J_s and J_t. Note that
+    # allele frequencies of exactly 0 or 1 should not be possible under the
+    # model, therefore both J_s and J_t should be restricted to be <1. They
+    # should also be restricted to be >0 because this would require the sum of
+    # infinitely many values. Finally, it should not be possible for J_t to
+    # exceed J_s.
+    J_s[J_s < 1e-10] <- 1e-10
+    J_s[J_s > 1.0 - 1e-10] <- 1 - 1e-10
+    J_t[J_t < 1e-10] <- 1e-10
+    J_t[J_t > 1.0 - 1e-10] <- 1 - 1e-10
+    J_s[J_s < J_t] <- J_t[J_s < J_t]
+    
     Gst <- (J_s - J_t) / (1 - J_t)
     
   } else {
@@ -306,6 +399,89 @@ calc_pairwise_Gst <- function(x) {
   }
   
   return(Gst)
+}
+
+# -----------------------------------
+# calculate pairwise Jost's D from a matrix or 3D array of allele frequencies. The
+# dimensions must be either 1) demes, 2) alleles for a matrix, or 1) demes, 2)
+# reps, 3) alleles for an array.
+#' @noRd
+calc_pairwise_D <- function(x) {
+  
+  # split based on matrix vs array
+  if (length(dim(x)) == 2) {
+    
+    # get basic dimensions
+    demes <- nrow(x)
+    alleles <- ncol(x)
+    
+    # get all pairs of demes
+    deme_pairs <- cbind(rep(1:(demes - 1), times = (demes - 1):1),
+                        unlist(mapply(function(i) i:demes, 2:demes)))
+    
+    # calculate D for all pairs
+    x_bar <- 0.5 * (x[deme_pairs[,1],] + x[deme_pairs[,2],])
+    J_t <- rowSums(x_bar^2)
+    J_i <- rowSums(x^2)
+    J_s <- 0.5 * (J_i[deme_pairs[,1]] + J_i[deme_pairs[,2]])
+    
+    # deal with underflow issues by restricting range of J_s and J_t. Note that
+    # allele frequencies of exactly 0 or 1 should not be possible under the
+    # model, therefore both J_s and J_t should be restricted to be <1. They
+    # should also be restricted to be >0 because this would require the sum of
+    # infinitely many values. Finally, it should not be possible for J_t to
+    # exceed J_s.
+    J_s[J_s < 1e-10] <- 1e-10
+    J_s[J_s > 1.0 - 1e-10] <- 1 - 1e-10
+    J_t[J_t < 1e-10] <- 1e-10
+    J_t[J_t > 1.0 - 1e-10] <- 1 - 1e-10
+    J_s[J_s < J_t] <- J_t[J_s < J_t]
+    
+    D <- (J_s - J_t) / J_s * demes / (demes - 1)
+    
+  } else if (length(dim(x)) == 3) {
+    
+    # get basic dimensions
+    demes <- dim(x)[1]
+    reps <- dim(x)[2]
+    alleles <- dim(x)[3]
+    
+    # get all pairs of demes
+    deme_pairs <- cbind(rep(1:(demes - 1), times = (demes - 1):1),
+                        unlist(mapply(function(i) i:demes, 2:demes)))
+    
+    # calculate Gst for all pairs
+    x_bar <- 0.5 * (x[deme_pairs[,1],,,drop = FALSE] + x[deme_pairs[,2],,,drop = FALSE])
+    J_t <- J_i <- 0
+    for (i in seq_len(alleles)) {
+      J_t <- J_t + x_bar[,,i]^2
+      J_i <- J_i + x[,,i]^2
+    }
+    if (reps == 1) {
+      J_t <- matrix(J_t)
+      J_i <- matrix(J_i)
+    }
+    J_s <- 0.5 * (J_i[deme_pairs[,1],,drop = FALSE] + J_i[deme_pairs[,2],,drop = FALSE])
+    
+    # deal with underflow issues by restricting range of J_s and J_t. Note that
+    # allele frequencies of exactly 0 or 1 should not be possible under the
+    # model, therefore both J_s and J_t should be restricted to be <1. They
+    # should also be restricted to be >0 because this would require the sum of
+    # infinitely many values. Finally, it should not be possible for J_t to
+    # exceed J_s.
+    J_s[J_s < 1e-10] <- 1e-10
+    J_s[J_s > 1.0 - 1e-10] <- 1 - 1e-10
+    J_t[J_t < 1e-10] <- 1e-10
+    J_t[J_t > 1.0 - 1e-10] <- 1 - 1e-10
+    J_s[J_s < J_t] <- J_t[J_s < J_t]
+    
+    D <- (J_s - J_t) / J_s * demes / (demes - 1)
+    
+  } else {
+    stop("input must be matrix or array")
+  }
+  
+  return(D)
 }
 
 # -----------------------------------
@@ -338,7 +514,6 @@ Bejamini_Yekutieli <- function(df_res, FDR) {
   # Bejamini and Yekutieli (2001) method for identifying significant results
   # while fixing the false descovery rate
   df_res$BY <- FDR * seq_along(df_res$p) / nrow(df_res)
-  lines(df_res$BY)
   which_lower <- which_upper <- integer()
   if (any(df_res$p <= df_res$BY, na.rm = TRUE)) {
     
@@ -365,5 +540,23 @@ get_summaries <- function(x, quantiles = NULL) {
     names(quants) <- sprintf("%s%%", round(quantiles * 100, digits = 1))
     ret$quantiles <- quants
   }
+  return(ret)
+}
+
+#------------------------------------------------
+# pass in a series of polygons (class sfc_POLYGON). Expand by a buffer distance
+# d and merge polygons
+#' @noRd
+get_merged_poly <- function(hex_polys, d = 0.1) {
+  
+  # expand polygons
+  ret <- st_buffer(hex_polys, d)
+  
+  # merge polygons
+  ret <- sf::st_union(sf::st_sf(ret))
+  
+  # undo expansion
+  ret <- st_buffer(ret, -d)
+  
   return(ret)
 }

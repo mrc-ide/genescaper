@@ -26,3 +26,4 @@ bool collision_test_circle_rect(double rx, double ry, double w, double h, double
 //------------------------------------------------
 bool collision_test_hex_ellipse(double hx, double hy, double w, double f1x,
                                 double f1y, double f2x, double f2y, double e);
+

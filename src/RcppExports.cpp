@@ -51,7 +51,7 @@ BEGIN_RCPP
 END_RCPP
 }
 // null_site_cpp
-Rcpp::List null_site_cpp(arma::mat data, Rcpp::List mcmc_sample, arma::mat dist_11, Rcpp::List params, int inner_reps, Rcpp::List args_progress, Rcpp::List args_functions, Rcpp::List args_misc);
+arma::field<arma::cube> null_site_cpp(arma::mat data, Rcpp::List mcmc_sample, arma::mat dist_11, Rcpp::List params, int inner_reps, Rcpp::List args_progress, Rcpp::List args_functions, Rcpp::List args_misc);
 RcppExport SEXP _genescaper_null_site_cpp(SEXP dataSEXP, SEXP mcmc_sampleSEXP, SEXP dist_11SEXP, SEXP paramsSEXP, SEXP inner_repsSEXP, SEXP args_progressSEXP, SEXP args_functionsSEXP, SEXP args_miscSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;

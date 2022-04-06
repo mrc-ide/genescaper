@@ -141,27 +141,10 @@ SEXP loglike(Rcpp::NumericVector params, Rcpp::List data, Rcpp::List misc) {
   double omega = params["omega"];
   double gamma = params["gamma"];
   
-  // get fixed parameters
-  double mu_mean = misc["mu_mean"];
-  //double mu_scale = misc["mu_scale"];
-  double sigsq_mean = misc["sigsq_mean"];
-  double sigsq_var = misc["sigsq_var"];
-  /*
-  vector<double> alpha_vec = Rcpp::as<vector<double>>(misc["alpha"]);
-  vector<double> beta_vec = Rcpp::as<vector<double>>(misc["beta"]);
-  vector<double> phi_vec = Rcpp::as<vector<double>>(misc["phi"]);
-  vector<double> gamma_vec = Rcpp::as<vector<double>>(misc["gamma"]);
-  */
-  // reparameterise for convenience
-  double phi_0 = mu_mean;
-  //double gamma_0 = 1.0 / mu_scale;
-  double alpha_0 = sigsq_mean * sigsq_mean / sigsq_var + 2.0;
-  double beta_0 = sigsq_mean * (alpha_0 - 1.0);
-  
-  alpha_0 = 0.01;
-  beta_0 = 0.01;
-  phi_0 = 0.0;
-  //gamma_0 = 0.5;
+  // define fixed parameters
+  double phi_0 = 0.0;
+  double alpha_0 = 0.01;
+  double beta_0 = 0.01;
   
   // get distance matrix between all sites
   Rcpp::NumericMatrix site_dist = misc["site_dist"];
@@ -206,17 +189,14 @@ SEXP loglike(Rcpp::NumericVector params, Rcpp::List data, Rcpp::List misc) {
     double alpha_1 = alpha_0 + (double)n_site / 2.0;
     double phi_1 = (gamma * phi_0 + K_inv_zsum) / gamma_1;
     double beta_1 = beta_0 + 0.5*(gamma*phi_0*phi_0 - gamma_1*phi_1*phi_1 + K_inv_zsq);
-    /*
-    double gamma_1 = gamma_vec[combo_i] + K_inv_sum;
-    double alpha_1 = alpha_vec[combo_i] + (double)n_site / 2.0;
-    double phi_1 = (gamma_vec[combo_i] * phi_vec[combo_i] + K_inv_zsum) / gamma_1;
-    double beta_1 = beta_vec[combo_i] + 0.5*(gamma_vec[combo_i]*phi_vec[combo_i]*phi_vec[combo_i] - gamma_1*phi_1*phi_1 + K_inv_zsq);
-    */
     
-    // calculate multivariate normal likelihood
-    ret += alpha_0*log(beta_0) - alpha_1*log(beta_1) + lgamma(alpha_1) - lgamma(alpha_0) + 0.5*log(gamma) -0.5*log(gamma_1) - 0.5*K_logdet;
-    //ret += alpha_vec[combo_i]*log(beta_vec[combo_i]) - alpha_1*log(beta_1) + lgamma(alpha_1) - lgamma(alpha_vec[combo_i]) + 0.5*log(gamma_vec[combo_i]) -0.5*log(gamma_1) - 0.5*K_logdet;
+    ret += alpha_0*log(beta_0) - alpha_1*log(beta_1) + lgamma(alpha_1) - lgamma(alpha_0) + 0.5*log(gamma) - 0.5*log(gamma_1) - 0.5*K_logdet;
     
+  }
+  
+  // catch non-finite return value and replace with arbitrary small value
+  if (isnan(ret)) {
+    ret = -DBL_MAX / 100;
   }
   
   // return as SEXP
@@ -231,20 +211,17 @@ SEXP logprior(Rcpp::NumericVector params, Rcpp::List misc) {
   double nu = params["nu"];
   double log_lambda = params["log_lambda"];
   double lambda = exp(log_lambda);
-  //double omega = params["omega"]; // (uniform prior adds nothing to ret)
+  //double omega = params["omega"]; // (uniform prior does not depend on parameter value)
+  //double gamma = params["gamma"]; // (uniform prior does not depend on parameter value)
   
   double nu_shape1 = misc["nu_shape1"];
   double nu_shape2 = misc["nu_shape2"];
-  double lambda_mean = misc["lambda_mean"];
-  double lambda_var = misc["lambda_var"];
-  
-  // reparameterise for convenience
-  double lambda_shape = lambda_mean * lambda_mean / lambda_var;
-  double lambda_rate = lambda_mean / lambda_var;
+  double lambda_shape = misc["lambda_shape"];
+  double lambda_rate = misc["lambda_rate"];
   
   // calculate logprior
   double ret = dgamma1(lambda, lambda_shape, lambda_rate, true) +
-    dbeta1(nu, nu_shape1, nu_shape2, true);
+    dbeta1(nu, nu_shape1, nu_shape2, true) - log(3.0 - 1.0) - log(10.0 - 0.1);
   //double ret = 0;
   
   // add adjustment factors for transformations

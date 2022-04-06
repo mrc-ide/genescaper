@@ -14,11 +14,25 @@ sim_GRF(
   sigsq_shape,
   sigsq_rate,
   mu_mean,
-  mu_scale
+  gamma
 )
 }
 \arguments{
-\item{N}{TODO}
+\item{project}{a genescaper project, as produced by the
+\code{genescaper_project()} function. The project must have a grid already
+defined (see \code{?create_hex_grid}) as this grid will be used in
+simulation.}
+
+\item{loci}{number of loci (assumed independent).}
+
+\item{alleles}{number of alleles, assumed to be the same over all loci.}
+
+\item{nu, lambda, omega}{the values of the model parameters used in simulation.
+These parameters together specify the spatial autocorrelation function.}
+
+\item{sigsq_shape, sigsq_rate, mu_mean, gamma}{parameters of the
+normal-inverse-gamma prior on the mean and variance of transformed allele
+frequencies.}
 }
 \description{
 TODO

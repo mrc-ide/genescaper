@@ -7,11 +7,12 @@
 #'   \code{genescaper_project()} function.
 #' @param site_data TODO
 #' @param genetic_data TODO
+#' @param epsilon TODO
 #'
 #' @importFrom rlang .data
 #' @export
 
-bind_data <- function(project, site_data, genetic_data) {
+bind_data <- function(project, site_data, genetic_data, epsilon = 0.5) {
   
   # check inputs
   assert_class(project, "genescaper_project")
@@ -27,13 +28,24 @@ bind_data <- function(project, site_data, genetic_data) {
   
   # check format of genetic_data
   assert_dataframe(genetic_data)
-  assert_in(c("site_ID", "locus", "allele", "freq"), names(genetic_data),
-            message = "genetic_data must have columns {site_ID, locus, allele, freq}")
+  mssg1 <- paste0("genetic_data must have columns {site_ID, locus, allele}, along with either {freq}",
+                  " for frequency data, or {count} for count data.")
+  assert_in(c("site_ID", "locus", "allele"), names(genetic_data), message = mssg1)
+  if (!("freq" %in% names(genetic_data)) & !("count" %in% names(genetic_data))) {
+    stop(mssg1)
+  }
+  if (("freq" %in% names(genetic_data)) & ("count" %in% names(genetic_data))) {
+    stop("genetic_data must contain columns {freq} OR {count}, but not both.")
+  }
   assert_vector_pos_int(genetic_data$locus)
   assert_vector_pos_int(genetic_data$allele)
-  assert_vector_pos(genetic_data$freq)
-  assert_bounded(genetic_data$freq, inclusive_left = FALSE, inclusive_right = FALSE,
-                 message = "allele frequencies must be in the range (0, 1), and cannot equal exactly 0 or 1")
+  genetic_type = ifelse("freq" %in% names(genetic_data), "freq", "count")
+  if (genetic_type == "freq") {
+    assert_vector_pos(genetic_data$freq)
+  }
+  if (genetic_type == "count") {
+    assert_vector_pos_int(genetic_data$count, zero_allowed = TRUE)
+  }
   
   # check that site_IDs match between datasets
   assert_eq(sort(unique(site_data$site_ID)),
@@ -58,6 +70,62 @@ bind_data <- function(project, site_data, genetic_data) {
     dplyr::summarise(same_alleles = length(unique(.data$hash)) == 1)
   if (!all(allele_match$same_alleles)) {
     stop("for a given locus, the same set of alleles (in the same order) must be represented for all site_IDs.")
+  }
+  
+  # check that frequencies sum to 1
+  if (genetic_type == "freq") {
+    freq_sum <- genetic_data %>%
+      dplyr::group_by(.data$site_ID, .data$locus) %>%
+      dplyr::summarise(freq_sum = sum(.data$freq))
+    if (!isTRUE(all.equal(freq_sum$freq_sum, rep(1, nrow(freq_sum))))) {
+      stop("allele frequencies must sum to 1 at every site and every locus")
+    }
+  }
+  
+  # check that counts sum to non-zero value
+  if (genetic_type == "count") {
+    count_sum <- genetic_data %>%
+      dplyr::group_by(.data$site_ID, .data$locus) %>%
+      dplyr::summarise(count_sum = sum(.data$count))
+    if (any(count_sum$count_sum == 0)) {
+      stop("must be at least one non-zero count over all alleles at a locus")
+    }
+  }
+  
+  # process data to deal with allele frequencies of exactly 0 or 1
+  if (genetic_type == "freq") {
+    
+    # check that frequencies are not fixed everywhere at any locus
+    any_unfixed <- genetic_data %>%
+      dplyr::group_by(.data$locus, .data$allele) %>%
+      dplyr::summarise(any_unfixed = any((.data$freq != 0) & (.data$freq != 1)))
+    if (!all(any_unfixed$any_unfixed)) {
+      stop("frequencies cannot be fixed (frequency of exactly 0 or 1) at every spatial location")
+    }
+    
+    # get epsilon value for each locus-allele combination
+    df_epsilon <- genetic_data %>%
+      dplyr::group_by(.data$locus, .data$allele) %>%
+      dplyr::summarise(min_freq = min(.data$freq[(.data$freq > 0) & (.data$freq < 1)]),
+                       max_freq = max(.data$freq[(.data$freq > 0) & (.data$freq < 1)]),
+                       epsilon = min(c(.data$min_freq, 1 - .data$max_freq))) %>%
+      dplyr::select("locus", "allele", "epsilon")
+    
+    # apply epsilon correction
+    genetic_data <- genetic_data %>%
+      dplyr::left_join(df_epsilon, by = c("locus", "allele")) %>%
+      dplyr::mutate(freq_raw = .data$freq,
+                    freq = ifelse(.data$freq < epsilon, epsilon, ifelse(.data$freq > 1 - epsilon, 1 - epsilon, .data$freq))) %>%
+      dplyr::ungroup() %>%
+      dplyr::select("site_ID", "locus", "allele", "freq_raw", "freq")
+    
+  } else if (genetic_type == "count") {
+    genetic_data <- genetic_data %>%
+      dplyr::mutate(count_adjusted = .data$count + epsilon) %>%
+      dplyr::group_by(.data$site_ID, .data$locus) %>%
+      dplyr::summarise(allele = .data$allele,
+                       count = .data$count,
+                       freq = .data$count_adjusted / sum(.data$count_adjusted))
   }
   
   # load data into project
@@ -86,6 +154,7 @@ get_pairwise_Gst <- function(project) {
   # get allele frequencies into list over loci then matrix over demes and
   # alleles
   freq_list <- project$data$raw$genetic_data %>%
+    dplyr::select(.data$site_ID, .data$locus, .data$allele, .data$freq) %>%
     dplyr::group_by(.data$locus) %>%
     dplyr::group_split() %>%
     lapply(function (x) {
@@ -111,46 +180,82 @@ get_pairwise_Gst <- function(project) {
 }
 
 #------------------------------------------------
+#' @title Calculate pairwise Jost's D between sites
+#'
+#' @description TODO
+#'
+#' @param project a genescaper project, as produced by the
+#'   \code{genescaper_project()} function.
+#'
+#' @export
+
+get_pairwise_D <- function(project) {
+  
+  # get allele frequencies into list over loci then matrix over demes and
+  # alleles
+  freq_list <- project$data$raw$genetic_data %>%
+    dplyr::select(.data$site_ID, .data$locus, .data$allele, .data$freq) %>%
+    dplyr::group_by(.data$locus) %>%
+    dplyr::group_split() %>%
+    lapply(function (x) {
+      x %>% tidyr::pivot_wider(names_from = .data$allele, values_from = .data$freq) %>%
+        dplyr::select(-.data$site_ID, -.data$locus) %>%
+        as.matrix()
+    })
+  
+  # calculate mean Jost's D over loci
+  D <- 0
+  for (i in seq_along(freq_list)) {
+    D <- D + calc_pairwise_D(freq_list[[i]])
+  }
+  D <- D / length(freq_list)
+  
+  # get into matrix
+  D_mat <- pairwise_to_mat(D)
+  
+  # load into project
+  project$data$pairwise_measures$D <- D_mat
+  
+  return(project)
+}
+
+#------------------------------------------------
 #' @title Define parameters of the spatial correlation model
 #'
 #' @description TODO
 #'
 #' @param project a genescaper project, as produced by the
 #'   \code{genescaper_project()} function.
-#' @param mu_mean TODO
-#' @param mu_scale TODO
-#' @param sigsq_mean TODO
-#' @param sigsq_var TODO
 #' @param nu_shape1 TODO
 #' @param nu_shape2 TODO
-#' @param lambda_mean TODO
-#' @param lambda_var TODO
+#' @param lambda_shape TODO
+#' @param lambda_rate TODO
 #'
 #' @export
 
-define_model <- function(project, mu_mean = 0.0, mu_scale = 1.0, sigsq_mean = 1.0, sigsq_var = 1.0,
-                         nu_shape1 = 1.0, nu_shape2 = 1.0, lambda_mean = 5.0, lambda_var = 10.0) {
+define_model <- function(project, nu_shape1 = 1.0, nu_shape2 = 1.0, lambda_shape = 1.0, lambda_rate = NULL) {
   
   # check inputs
   assert_class(project, "genescaper_project")
-  assert_single_numeric(mu_mean)
-  assert_single_pos(mu_scale, zero_allowed = FALSE)
-  assert_single_pos(sigsq_mean, zero_allowed = FALSE)
-  assert_single_pos(sigsq_var, zero_allowed = FALSE)
   assert_single_pos(nu_shape1, zero_allowed = FALSE)
   assert_single_pos(nu_shape2, zero_allowed = FALSE)
-  assert_single_pos(lambda_mean, zero_allowed = FALSE)
-  assert_single_pos(lambda_var, zero_allowed = FALSE)
+  assert_single_pos(lambda_shape, zero_allowed = FALSE)
+  if (!is.null(lambda_rate)) {
+    assert_single_pos(lambda_rate, zero_allowed = FALSE)
+  }
+  
+  # set default lambda_rate such that expected lambda is half maximum distance
+  # in data
+  if (is.null(lambda_rate)) {
+    max_dist <- max(project$data$pairwise_measures$distance)
+    lambda_rate <- lambda_shape / (max_dist / 2)
+  }
   
   # store within project
-  project$model$parameters <- list(mu_mean = mu_mean,
-                                   mu_scale = mu_scale,
-                                   sigsq_mean = sigsq_mean,
-                                   sigsq_var = sigsq_var,
-                                   nu_shape1 = nu_shape1,
+  project$model$parameters <- list(nu_shape1 = nu_shape1,
                                    nu_shape2 = nu_shape2,
-                                   lambda_mean = lambda_mean,
-                                   lambda_var = lambda_var)
+                                   lambda_shape = lambda_shape,
+                                   lambda_rate = lambda_rate)
   
   return(project)
 }
@@ -162,15 +267,20 @@ define_model <- function(project, mu_mean = 0.0, mu_scale = 1.0, sigsq_mean = 1.
 #'
 #' @param project a genescaper project, as produced by the
 #'   \code{genescaper_project()} function.
+#' @param chains TODO
 #' @param ... additional parameters that will be passed to
 #'   \code{drjacoby::run_mcmc()}.
 #'
 #' @export
 
-run_mcmc <- function(project, mu_true, sigsq_true, ...) {
+run_mcmc <- function(project, chains, ...) {
+  
+  # avoid "no visible binding" warning
+  loglike <- NULL
   
   # check inputs
   assert_class(project, "genescaper_project")
+  assert_single_pos_int(chains, zero_allowed = FALSE)
   
   # check that both data and model have been defined
   assert_non_null(project$dat$raw)
@@ -183,54 +293,6 @@ run_mcmc <- function(project, mu_true, sigsq_true, ...) {
   z_df <- project$data$raw$genetic_data %>%
     transform_p_to_z()
   
-  # get some prior parameters from data (empirical Bayes)
-  prior_df <- z_df %>% 
-    dplyr::group_by(locus, allele) %>%
-    dplyr::summarise(m = mean(z),
-                     v = var(z),
-                     coef_var = 1,
-                     alpha = coef_var^2 + 2,
-                     beta = (alpha - 1) * v,
-                     phi = m,
-                     gamma = 1,
-                     .groups = "keep")
-  
-  plot1 <- prior_df %>%
-    bind_cols(mu_true = mu_true,
-              sigsq_true = sigsq_true) %>%
-    ggplot() + theme_bw() +
-    geom_point(aes(x = mu_true, y = m)) +
-    geom_abline(aes(slope = 1, intercept = 0)) +
-    xlim(c(-5,5)) + ylim(c(-5, 5))
-  #print(plot1)
-  
-  plot2 <- prior_df %>%
-    bind_cols(mu_true = mu_true,
-              sigsq_true = sigsq_true) %>%
-    ggplot() + theme_bw() +
-    geom_point(aes(x = sigsq_true, y = v)) +
-    geom_abline(aes(slope = 1, intercept = 0)) +
-    xlim(c(-5,5)) + ylim(c(-5, 5))
-  #print(plot2)
-  
-  if (FALSE) {
-  prior_df <- z_df %>% 
-    dplyr::group_by(locus, allele) %>%
-    dplyr::summarise(m = mu_true,
-                     v = sigsq_true,
-                     coef_var = 100,
-                     alpha = coef_var^2 + 2,
-                     beta = (alpha - 1) * v,
-                     phi = m,
-                     gamma = 1,
-                     .groups = "keep")
-  
-  prior_df$alpha <- 0.01
-  prior_df$beta <- 0.01
-  prior_df$phi <- 0.0
-  prior_df$gamma <- 1.0
-  }
-  
   # split z-values into a list over all locus-allele combos
   z_list <-  z_df %>%
     dplyr::select(.data$locus, .data$allele, .data$z) %>%
@@ -240,26 +302,43 @@ run_mcmc <- function(project, mu_true, sigsq_true, ...) {
   names(z_list) <- seq_along(z_list)
   
   # define parameters dataframe
-  df_params <- drjacoby::define_params(name = "nu", min = 0, max = 1,
-                                       name = "log_lambda", min = -Inf, max = Inf,
-                                       name = "omega", min = 1, max = 2,
-                                       name = "gamma", min = 0.1, max = 10)
+  df_params <- drjacoby::define_params(name = "nu", min = 0, max = 1, init = rep(1e-4, chains),
+                                       name = "log_lambda", min = -Inf, max = Inf, init = rep(log(mean(site_dist)), chains),
+                                       name = "omega", min = 1, max = 3.0, init = runif(chains, 1.1, 1.5),
+                                       name = "gamma", min = 0.1, max = 10, init = runif(chains, 0.2, 9))
+  
+  # define misc list
+  misc_list <- append(project$model$parameters,
+                      list(site_dist = site_dist,
+                           n_site = nrow(site_dist)))
   
   # source C++ likelihood and prior functions
   Rcpp::sourceCpp(system.file("extdata/GRF_model.cpp", package = 'genescaper', mustWork = TRUE))
   
+  # check that all initial values create valid likelihoods
+  ll_init <- rep(NA, chains)
+  for (i in 1:chains) {
+    param_vec <- c("nu" = df_params$init[[1]][i],
+                   "log_lambda" = df_params$init[[2]][i],
+                   "omega" = df_params$init[[3]][i],
+                   "gamma" = df_params$init[[4]][i])
+    
+    ll_init[i] <- loglike(params = param_vec, data = z_list, misc = misc_list)
+  }
+  if (any(ll_init < -1e+300)) {
+    warning("initial parameter values produce log-likelihoods outside reasonable range")
+    print(df_params)
+    print(ll_init)
+    stop()
+  }
+  
   # run MCMC
   mcmc <- drjacoby::run_mcmc(data = z_list,
                              df_params = df_params,
-                             misc = append(project$model$parameters,
-                                           list(site_dist = site_dist,
-                                                n_site = nrow(site_dist),
-                                                alpha = prior_df$alpha,
-                                                beta = prior_df$beta,
-                                                phi = prior_df$phi,
-                                                gamma = prior_df$gamma)),
+                             misc = misc_list,
                              loglike = "loglike",
                              logprior = "logprior",
+                             chains = chains,
                              ...)
   
   # replace log_lambda with lambda in output
@@ -392,7 +471,7 @@ predict_map <- function(project, loci, reps = 2, inner_reps = 10,
   # sample parameters from posterior
   mcmc_sample <- project$model$MCMC$output %>%
     dplyr::filter(.data$phase == "sampling") %>%
-    dplyr::select(.data$nu, .data$lambda, .data$omega) %>%
+    dplyr::select(.data$nu, .data$lambda, .data$omega, .data$gamma) %>%
     dplyr::sample_n(reps) %>%
     as.list()
   
@@ -430,7 +509,8 @@ predict_map <- function(project, loci, reps = 2, inner_reps = 10,
   args_progress <- list(pb = pb)
   
   # create misc list
-  args_misc <- list(pb_markdown = pb_markdown)
+  args_misc <- list(silent = silent,
+                    pb_markdown = pb_markdown)
   
   # initialise list for storing results
   project$maps$predictions <- replicate(length(loci), NULL)
@@ -572,7 +652,7 @@ stat_sim <- function(project, reps, inner_reps, silent, pb_markdown) {
   # sample parameters from posterior
   mcmc_sample <- project$model$MCMC$output %>%
     dplyr::filter(.data$phase == "sampling") %>%
-    dplyr::select(.data$nu, .data$lambda, .data$omega) %>%
+    dplyr::select(.data$nu, .data$lambda, .data$omega, .data$gamma) %>%
     dplyr::sample_n(reps) %>%
     as.list()
   
@@ -611,35 +691,13 @@ stat_sim <- function(project, reps, inner_reps, silent, pb_markdown) {
   
   # loop through loci
   ret <- 0
-  df_all <- data.frame()
   for (i in seq_along(loci)) {
     
     # draw from null distribution via efficient C++ function
-    out_raw <- null_site_cpp(data_list[[i]], mcmc_sample, dist_11,
+    sim_array <- null_site_cpp(data_list[[i]], mcmc_sample, dist_11,
                                project$model$parameters, inner_reps,
-                               args_progress, args_functions, args_misc)
-    #sim_array <- null_site_cpp(data_list[[i]], mcmc_sample, dist_11,
-    #                           project$model$parameters, inner_reps,
-    #                           args_progress, args_functions, args_misc) %>%
-    sim_array <- out_raw$raw %>%
+                               args_progress, args_functions, args_misc) %>%
       abind::abind(along = 2)
-    
-    df_i <- project$data$raw$genetic_data %>%
-      filter(locus == i) %>%
-      group_by(allele) %>%
-      summarise(p_mean_obs = mean(freq),
-                p_sd_obs = sd(freq),
-                locus = i) %>%
-      bind_cols(p_mean_sim = apply(sim_array, 3, mean),
-                p_sd_sim = apply(sim_array, 3, sd),
-                z_mean_obs = c(apply(data_list[[i]], 2, mean), NA),
-                z_sd_obs = c(apply(data_list[[i]], 2, sd), NA),
-                z_mean_sim = c(out_raw$mu, NA),
-                z_sd_sim = c(out_raw$sig, NA))
-    df_all <- rbind(df_all, df_i)
-    
-    #df_i %>%
-    #  select(z_sd_obs, z_sd_sim)
     
     # add to running estimate
     ret <- ret + calc_pairwise_Gst(sim_array)
@@ -648,31 +706,6 @@ stat_sim <- function(project, reps, inner_reps, silent, pb_markdown) {
       update_progress(args_progress, "pb", i, n_loci)
     }
   } # end loop through loci
-  
-  #df_all %>%
-  #  filter((z_sd_sim - z_sd_obs) > 0.3)
-  
-  df_all %>%
-    filter(!is.na(z_mean_obs)) %>%
-    ggplot() + theme_bw() +
-    geom_point(aes(x = z_mean_obs, y = z_mean_sim)) +
-    geom_abline()
-  
-  df_all %>%
-    ggplot() + theme_bw() +
-    geom_point(aes(x = p_mean_obs, y = p_mean_sim)) +
-    geom_abline()
-  
-  df_all %>%
-    filter(!is.na(z_mean_obs)) %>%
-    ggplot() + theme_bw() +
-    geom_point(aes(x = z_sd_obs, y = z_sd_sim)) +
-    geom_abline()
-  
-  df_all %>%
-    ggplot() + theme_bw() +
-    geom_point(aes(x = p_sd_obs, y = p_sd_sim)) +
-    geom_abline()
   
   # divide through by loci
   ret <- ret / n_loci
@@ -730,7 +763,7 @@ GeoMAPI_assign_edges <- function(project,
   
   # deal with infinite max_dist
   if (!is.finite(max_dist)) {
-    max_dist <- max(dist_11) +1e2
+    max_dist <- max(dist_11) + 1e2
   }
   
   # create function list
@@ -767,6 +800,156 @@ GeoMAPI_assign_edges <- function(project,
   project$GeoMAPI$coverage <- coverage
   
   return(project)
+}
+
+#------------------------------------------------
+#' @title Suggest eccentricity parameter based on target coverage
+#'
+#' @description TODO
+#'
+#' @details TODO
+#' 
+#' @param project a genescaper project, as produced by the
+#'   \code{genescaper_project()} function.
+#' @param target_coverage,target_proportion eccentricity will be chosen such
+#'   that a proportion \code{target_proportion} of cells achieve a coverage of
+#'   at least \code{target_coverage}.
+#' @param n_iterations the number of iterations to run of the binary search
+#'   method.
+#' @param max_dist edges shorter than this length are discarded prior to
+#'   assignment. Can be used to focus on short distance signals.
+#' @param silent if \code{TRUE} then no output is produced during function
+#'   evaluation.
+#' @param pb_markdown whether to run progress bars in markdown mode, in which
+#'   case they are updated once at the end to avoid large amounts of output.
+#'
+#' @export
+
+GeoMAPI_suggest_eccentricity <- function(project,
+                                         target_coverage = 10,
+                                         target_proportion = 0.9,
+                                         n_iterations = 30,
+                                         max_dist = Inf,
+                                         silent = FALSE,
+                                         pb_markdown = FALSE) {
+  
+  # check inputs
+  assert_class(project, "genescaper_project")
+  assert_single_pos_int(target_coverage, zero_allowed = FALSE)
+  assert_single_bounded(target_proportion, inclusive_left = TRUE, inclusive_right = TRUE)
+  assert_single_pos_int(n_iterations, zero_allowed = FALSE)
+  assert_single_numeric(max_dist)
+  assert_single_logical(silent)
+  assert_single_logical(pb_markdown)
+  
+  # get distance between sampling sites
+  dist_11 <- as.matrix(project$data$pairwise_measures$distance)
+  
+  # get largest and smallest distance between sampling sites
+  d_vec <- dist_11[upper.tri(dist_11)]
+  d_min <- min(d_vec[d_vec > 0])
+  d_max <- max(d_vec[d_vec > 0])
+  
+  # deal with infinite max_dist (cannot pass infinite values to C++)
+  if (!is.finite(max_dist)) {
+    max_dist <- d_max + 1e2
+  }
+  
+  # get distance between cells, and get maximum distance
+  cell_dist <- get_GC_distance(lon = project$maps$grid$centroids$longitude,
+                               lat = project$maps$grid$centroids$latitude)
+  c_max <- max(cell_dist)
+  
+  # use min/max distances to define a value of eccentricity that we know for
+  # certain will result in all edges being assigned to all cells. The logic here
+  # is to imagine a circle within an ellipse, with radius of the circle equal to
+  # the semi-minor axis of the ellipse. Imagine that we choose the radius of the
+  # circle to be the furthest distance between any two cells (c_max), such that
+  # no matter where the circle is centred it will be assigned to all cells. This
+  # tells us the desired semi-minor axis of the ellipse. Now imagine that the
+  # ellipse is constructed between the *closest* two sampling locations. This
+  # tells us the half-distance between foci. These two values together can be
+  # used to derive the eccentricity.
+  ecc_min <- 1 / sqrt((2 * c_max / d_min)^2 + 1)
+  
+  # create function list
+  args_functions <- list(update_progress = update_progress)
+  
+  # create argument list
+  args <- list(node_lon = project$data$raw$site_data$longitude,
+               node_lat = project$data$raw$site_data$latitude,
+               centroid_lon = project$maps$grid$centroids$longitude,
+               centroid_lat = project$maps$grid$centroids$latitude,
+               width = project$maps$grid$parameters$hex_width,
+               eccentricity = 1.0,
+               max_dist = max_dist,
+               silent = TRUE,
+               pb_markdown = TRUE)
+  
+  # run coverage analysis once with eccentricity = 1.0, i.e. straight lines
+  # between cells. Establish the proportion of cells with satisfactory coverage
+  # in this situation. If it is greater than the desired target proportion then
+  # there is no point performing a search, as eccentricity will simply keep
+  # pushing up towards 1.
+  output_raw <- GeoMAPI_assign_edges_cpp(args, args_functions, list(), dist_11)
+  coverage <- mapply(length, output_raw$edge_assignment)
+  actual_proportion <- mean(coverage > target_coverage)
+  if (actual_proportion > target_proportion) {
+    message(paste0("Even an eccentricity of 1.0 (i.e. perfect straight lines) achieves the target proportion. Think about:",
+                   "\n - decreasing the max_dist (sharper resolution)",
+                   "\n - increasing the target_proportion (greater number of reliable cells)",
+                   "\n - increasing the target_coverage (more stringent requirement of cells)",
+                   "\n - increasing the resolution of the grid (sharper resolution)",
+                   "\n - setting the eccentricity manually"))
+    return(1.0)
+  }
+  
+  # set starting eccentricity bounds in search
+  ecc_left <- ecc_min
+  ecc_right <- 1.0
+  ecc_prop <- ecc_min
+  actual_proportion <- 1
+  
+  # create progress bar
+  pb_search <- txtProgressBar(0, n_iterations, initial = NA, style = 3)
+  
+  # perform search
+  message("Running binary search")
+  for (i in 1:n_iterations) {
+    
+    # calculate next search value
+    if (actual_proportion > target_proportion) {
+      ecc_left <- ecc_prop
+    } else {
+      ecc_right <- ecc_prop
+    }
+    ecc_prop <- (ecc_left + ecc_right) / 2
+    
+    # update arguments with proposed eccentricity
+    args$eccentricity <- ecc_prop
+    
+    # assign edges via efficient C++ function
+    output_raw <- GeoMAPI_assign_edges_cpp(args, args_functions, list(), dist_11)
+    
+    # calculate coverage
+    coverage <- mapply(length, output_raw$edge_assignment)
+    
+    # get proportion good coverage
+    actual_proportion <- mean(coverage > target_coverage)
+    
+    # update progress bar
+    if (!silent) {
+      update_progress(list(pb = pb_search), "pb", i, n_iterations)
+    }
+  }
+  
+  # report result
+  if (!silent) {
+    message(sprintf("Eccentricity of %s means that %s%% of cells achieve a coverage of %s or higher",
+                    ecc_prop, signif(actual_proportion * 100), target_coverage))
+  }
+  
+  return(ecc_prop)
 }
 
 #------------------------------------------------
@@ -828,13 +1011,6 @@ GeoMAPI_analysis <- function(project, reps = 2, inner_reps = 10,
     cell_sim <- colMeans(Gst_sim_norm[edges,,drop = FALSE])
     z_score[i] <- (cell_obs - mean(cell_sim)) / sd(cell_sim)
   }
-  
-  #plot(z_score)
-  
-  #ggplot() + theme_bw() + theme(panel.grid.major = element_blank(),
-  #                              panel.grid.minor = element_blank()) +
-  #  geom_sf(aes_(fill = ~z_score), color = NA, data = myproj$maps$grid$polygons) +
-  #  scale_fill_gradientn(colours = viridisLite::viridis(100), name = "z_score")
   
   # save to project
   project$GeoMAPI$z_score <- z_score
@@ -918,11 +1094,14 @@ GeoMAPI_get_significant <- function(project, test_tail = "both", FDR = 0.05,
 #' @param loci TODO
 #' @param reps TODO
 #' @param inner_reps TODO
+#' @param measure TODO
+#' @param patch_size TODO
+#' @param quantiles TODO
 #' @param silent TODO
 #' @param pb_markdown TODO
 #'
 #' @importFrom utils txtProgressBar
-#' @importFrom stats quantile sd
+#' @importFrom stats quantile sd var
 #' @export
 
 Wombling <- function(project, loci = NULL, reps = 2, inner_reps = 10,
@@ -971,7 +1150,7 @@ Wombling <- function(project, loci = NULL, reps = 2, inner_reps = 10,
   # sample parameters from posterior
   mcmc_sample <- project$model$MCMC$output %>%
     dplyr::filter(.data$phase == "sampling") %>%
-    dplyr::select(.data$nu, .data$lambda, .data$omega) %>%
+    dplyr::select(.data$nu, .data$lambda, .data$omega, .data$gamma) %>%
     dplyr::sample_n(reps) %>%
     as.list()
   
@@ -1110,33 +1289,6 @@ Wombling <- function(project, loci = NULL, reps = 2, inner_reps = 10,
     
   }  # end loop over loci
   
-  if (FALSE) {
-    tmp_00 <- null_variance
-    tmp_01 <- post_variance
-    null_s = get_summaries(tmp_00 / sum(n_alleles), quantiles = quantiles)
-    
-    tmp1 <- apply(tmp_00 / sum(n_alleles), 2, function(x) {
-      (x - null_s$mean) / null_s$sd
-    })
-    tmp2 <- apply(tmp_01 / sum(n_alleles), 2, function(x) {
-      (x - null_s$mean) / null_s$sd
-    })
-    tmp3 <- rep(NA, n_cells)
-    for (i in 1:n_cells) {
-      adjacents <- adj_list[[i]]
-      s1 <- colSums(tmp1[adjacents,,drop = FALSE])
-      s2 <- colSums(tmp2[adjacents,,drop = FALSE])
-      tmp3[i] <- mean(s2 > s1)
-    }
-    
-    plot(tmp3, ylim = c(0,1))
-    plot(myproj$maps$grid$polygons, col = bobfunctions2::smooth_cols(tmp3))
-    
-    percentile_rank = rowMeans(tmp_01 > tmp_00)
-    plot(percentile_rank, ylim = c(0,1))
-    plot(myproj$maps$grid$polygons, col = bobfunctions2::smooth_cols(percentile_rank))
-  }
-  
   # get summaries and add to project
   if (max_abs_grad_on) {
     project$Wombling$max_abs_grad <- list(systemic_map = get_summaries(post_max_abs_grad / sum(n_alleles), quantiles = quantiles),
@@ -1164,6 +1316,7 @@ Wombling <- function(project, loci = NULL, reps = 2, inner_reps = 10,
 #' @description TODO
 #'
 #' @param project TODO
+#' @param measure TODO
 #' @param test_tail TODO
 #' @param FDR TODO
 #' @param silent TODO
