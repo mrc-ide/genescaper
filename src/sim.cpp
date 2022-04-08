@@ -87,7 +87,7 @@ Rcpp::List sim_wrightfisher_cpp(Rcpp::List args, Rcpp::List args_functions, Rcpp
     }
     
     // apply migration
-    for (int j = 0; j < mig_list.size(); ++j) {
+    for (int j = 0; j < int(mig_list.size()); ++j) {
       
       // draw number of migrants
       int n_mig = rbinom1(N, mig_list[j].second);
