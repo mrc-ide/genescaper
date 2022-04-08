@@ -30,13 +30,7 @@ arma::field<arma::cube> predict_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
   vector<double> nu_draws = rcpp_to_vector_double(mcmc_sample["nu"]);
   vector<double> lambda_draws = rcpp_to_vector_double(mcmc_sample["lambda"]);
   vector<double> omega_draws = rcpp_to_vector_double(mcmc_sample["omega"]);
-  vector<double> gamma_draws = rcpp_to_vector_double(mcmc_sample["gamma"]);
   int reps = nu_draws.size();
-  
-  // define fixed model parameters
-  double phi_0 = 0.0;
-  double alpha_0 = 0.01;
-  double beta_0 = 0.01;
   
   // initialise intermediate objects
   arma::vec ones_pred = arma::ones(n_pred, 1);
@@ -57,7 +51,6 @@ arma::field<arma::cube> predict_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
     double nu = nu_draws[rep_i];
     double inv_lambda = 1.0 / lambda_draws[rep_i];
     double omega = omega_draws[rep_i];
-    double gamma = gamma_draws[rep_i];
     
     // allow user to exit on escape
     Rcpp::checkUserInterrupt();
@@ -84,8 +77,7 @@ arma::field<arma::cube> predict_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
       
       // draw mu and sigsq from posterior
       double sigsq, mu;
-      draw_sigsq_mu(sigsq, mu, gamma, phi_0, alpha_0, beta_0, n_site, K_11_inv,
-                    z_obs, ones_site);
+      draw_sigsq_mu(sigsq, mu, n_site, K_11_inv, z_obs, ones_site);
       
       // draw y from posterior
       draw_y_post(y, sigsq, mu, R_11_inv, W_11_inv, ones_site, z_obs, nu);
@@ -116,19 +108,19 @@ arma::field<arma::cube> predict_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
 
 //------------------------------------------------
 // draw mu and sigsq (passed in by reference) from posterior
-void draw_sigsq_mu(double &sigsq, double &mu, double gamma_0, double phi_0,
-                   double alpha_0, double beta_0, int n_site, arma::mat &K_11_inv,
+void draw_sigsq_mu(double &sigsq, double &mu, int n_site, arma::mat &K_11_inv,
                    arma::vec z, arma::vec ones_site) {
   
   // calculate posterior parameters
-  double alpha_1 = alpha_0 + 0.5 * (double)n_site;
-  double gamma_1 = gamma_0 + arma::accu(K_11_inv);
-  double phi_1 = (gamma_0 * phi_0 + arma::as_scalar(z.t() * K_11_inv * ones_site)) / gamma_1;
-  double beta_1 = beta_0 + 0.5*(gamma_0 * sq(phi_0) - gamma_1 * sq(phi_1) + arma::as_scalar(z.t() * K_11_inv * z));
+  double alpha_1 = 0.5 * (double)n_site;
+  double gamma_1 = arma::accu(K_11_inv);
+  double phi_1 = arma::as_scalar(z.t() * K_11_inv * ones_site) / gamma_1;
+  double beta_1 = 0.5*(arma::as_scalar(z.t() * K_11_inv * z) - gamma_1 * sq(phi_1));
   
   // draw mu and sigsq
   sigsq = 1.0 / rgamma1(alpha_1, beta_1);
   mu = rnorm1(phi_1, pow(sigsq / gamma_1, 0.5));
+  
 }
 
 //------------------------------------------------
@@ -210,13 +202,7 @@ arma::field<arma::cube> null_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
   vector<double> omega_draws = rcpp_to_vector_double(mcmc_sample["omega"]);
   vector<double> lambda_draws = rcpp_to_vector_double(mcmc_sample["lambda"]);
   vector<double> nu_draws = rcpp_to_vector_double(mcmc_sample["nu"]);
-  vector<double> gamma_draws = rcpp_to_vector_double(mcmc_sample["gamma"]);
   int reps = nu_draws.size();
-  
-  // define fixed model parameters
-  double phi_0 = 0;
-  double alpha_0 = 0.01;
-  double beta_0 = 0.01;
   
   // initialise intermediate objects
   arma::vec ones_pred = arma::ones(n_pred, 1);
@@ -236,7 +222,6 @@ arma::field<arma::cube> null_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
     double nu = nu_draws[rep_i];
     double inv_lambda = 1.0 / lambda_draws[rep_i];
     double omega = omega_draws[rep_i];
-    double gamma = gamma_draws[rep_i];
     
     // allow user to exit on escape
     Rcpp::checkUserInterrupt();
@@ -260,8 +245,7 @@ arma::field<arma::cube> null_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
       
       // draw mu and sigsq from posterior
       double sigsq, mu;
-      draw_sigsq_mu(sigsq, mu, gamma, phi_0, alpha_0, beta_0, n_site, K_11_inv,
-                    z_obs, ones_site);
+      draw_sigsq_mu(sigsq, mu, n_site, K_11_inv, z_obs, ones_site);
       
       // draw z from null distribution
       draw_z_null(z_cube.slice(allele_i), K_22, mu, sigsq, ones_pred, inner_reps);
@@ -318,13 +302,7 @@ arma::field<arma::cube> null_site_cpp(arma::mat data, Rcpp::List mcmc_sample,
   vector<double> omega_draws = rcpp_to_vector_double(mcmc_sample["omega"]);
   vector<double> lambda_draws = rcpp_to_vector_double(mcmc_sample["lambda"]);
   vector<double> nu_draws = rcpp_to_vector_double(mcmc_sample["nu"]);
-  vector<double> gamma_draws = rcpp_to_vector_double(mcmc_sample["gamma"]);
   int reps = nu_draws.size();
-  
-  // define fixed model parameters
-  double phi_0 = 0;
-  double alpha_0 = 0.01;
-  double beta_0 = 0.01;
   
   // initialise intermediate objects
   arma::vec ones_site = arma::ones(n_site, 1);
@@ -343,7 +321,6 @@ arma::field<arma::cube> null_site_cpp(arma::mat data, Rcpp::List mcmc_sample,
     double nu = nu_draws[rep_i];
     double inv_lambda = 1.0 / lambda_draws[rep_i];
     double omega = omega_draws[rep_i];
-    double gamma = gamma_draws[rep_i];
     
     // allow user to exit on escape
     Rcpp::checkUserInterrupt();
@@ -363,8 +340,7 @@ arma::field<arma::cube> null_site_cpp(arma::mat data, Rcpp::List mcmc_sample,
       
       // draw mu and sigsq from posterior
       double sigsq, mu;
-      draw_sigsq_mu(sigsq, mu, gamma, phi_0, alpha_0, beta_0, n_site, K_11_inv,
-                    z_obs, ones_site);
+      draw_sigsq_mu(sigsq, mu, n_site, K_11_inv, z_obs, ones_site);
       
       // draw z from null distribution
       draw_z_null(z_cube.slice(allele_i), K_11, mu, sigsq, ones_site, inner_reps);
@@ -464,7 +440,7 @@ Rcpp::List GeoMAPI_assign_edges_cpp(Rcpp::List args, Rcpp::List args_functions, 
 //------------------------------------------------
 // draw sigma squared and mu from conditional posterior
 Rcpp::List post_sigsq_mu(arma::mat data, Rcpp::List mcmc_sample,
-                         arma::mat dist_11, std::vector<double> true_sigsq) {
+                         arma::mat dist_11) {
   
   // get basic dimensions
   int alleles = data.n_cols;
@@ -474,13 +450,7 @@ Rcpp::List post_sigsq_mu(arma::mat data, Rcpp::List mcmc_sample,
   vector<double> nu_draws = rcpp_to_vector_double(mcmc_sample["nu"]);
   vector<double> lambda_draws = rcpp_to_vector_double(mcmc_sample["lambda"]);
   vector<double> omega_draws = rcpp_to_vector_double(mcmc_sample["omega"]);
-  vector<double> gamma_draws = rcpp_to_vector_double(mcmc_sample["gamma"]);
   int reps = nu_draws.size();
-  
-  // define fixed model parameters
-  double alpha_0 = 0.0;
-  double beta_0 = 0.0;
-  double phi_0 = 0.0;
   
   // initialise intermediate objects
   arma::vec ones_site = arma::ones(n_site, 1);
@@ -494,10 +464,6 @@ Rcpp::List post_sigsq_mu(arma::mat data, Rcpp::List mcmc_sample,
     double nu = nu_draws[rep_i];
     double inv_lambda = 1.0 / lambda_draws[rep_i];
     double omega = omega_draws[rep_i];
-    double gamma = gamma_draws[rep_i];
-    
-    // TODO - remove
-    gamma = 0.0;
     
     // allow user to exit on escape
     Rcpp::checkUserInterrupt();
@@ -515,15 +481,9 @@ Rcpp::List post_sigsq_mu(arma::mat data, Rcpp::List mcmc_sample,
       // get data for this allele
       arma::vec z_obs = data.col(allele_i);
       
-      // TODO - remove
-      //double v = 0.01;
-      //alpha_0 = true_sigsq[allele_i]*true_sigsq[allele_i] / v + 2.0;
-      //beta_0 = true_sigsq[allele_i] * (alpha_0 - 1.0);
-      //print(alpha_0, beta_0);
-      
       // draw mu and sigsq from posterior
       draw_sigsq_mu(sigsq[allele_i][rep_i], mu[allele_i][rep_i],
-                    gamma, phi_0, alpha_0, beta_0, n_site, K_11_inv, z_obs, ones_site);
+                    n_site, K_11_inv, z_obs, ones_site);
       
     }  // end of allele_i loop
     

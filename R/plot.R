@@ -302,7 +302,7 @@ GeoMAPI_plot_zscore <- function(project,
     if (length(w_upper) != 0) {
       merged_poly_upper <- get_merged_poly(project$maps$grid$polygons[w_upper],
                                            d = project$maps$grid$parameters$hex_width / 10)
-      plot1 <- plot1 + geom_sf(color = "white", fill = NA, data = merged_poly_lower)
+      plot1 <- plot1 + geom_sf(color = "white", fill = NA, data = merged_poly_upper)
     }
     
     # outline low values

@@ -152,13 +152,12 @@ transform_p_to_z <- function(genetic_data) {
                      freq = .data$freq[-.data$J],
                      stick_remaining = 1 - cumsum(.data$freq[-.data$J]) + .data$freq[-.data$J],
                      .groups = "keep") %>%
-    dplyr::mutate(stick_remaining = ifelse(stick_remaining < 1e-10, 1e-10, stick_remaining),
-                  stick_remaining = ifelse(stick_remaining > 1 - 1e-10, 1 - 1e-10, stick_remaining)) %>%
-    #dplyr::mutate(log_p = log(.data$freq[-.data$J]))
+    dplyr::mutate(stick_remaining = ifelse(.data$stick_remaining < 1e-10, 1e-10, .data$stick_remaining),
+                  stick_remaining = ifelse(.data$stick_remaining > 1 - 1e-10, 1 - 1e-10, .data$stick_remaining)) %>%
     dplyr::mutate(log_p = log(.data$freq[-.data$J]) - log(.data$stick_remaining),
                   log_p = ifelse(.data$log_p > -1e-10, -1e-10, .data$log_p),
-                  log_q = log_one_minus(log_p),
-                  z = log_p - log_q) %>%
+                  log_q = log_one_minus(.data$log_p),
+                  z = .data$log_p - .data$log_q) %>%
     dplyr::ungroup() %>%
     dplyr::select(.data$site_ID, .data$locus, .data$allele, .data$z)
   
@@ -193,53 +192,6 @@ transform_z_to_p <- function(z) {
   p[,n_alleles + 1] <- stick_remaining
   
   return(p)
-}
-
-#------------------------------------------------
-# Equivalent to transform_z_to_p(), but evaluated in log space (returning
-# log(p)), and operates on a 3D array with the following dimensions: 1) demes,
-# 2) reps, 3) alleles. Uses some approximations for extreme large or small z to
-# avoid underflow issues that otherwise could result in logistic transform
-# returning 0 or 1, which should not be possible for finite z.
-#' @noRd
-transform_z_to_logp <- function(z) {
-  
-  # check inputs
-  assert_length(dim(z), 3)
-  
-  # get basic dimensions
-  n_demes <- dim(z)[1]
-  n_reps <- dim(z)[2]
-  n_alleles <- dim(z)[3]
-  
-  # log-logistic transform
-  log_q <- -log(1 + exp(-z))
-  
-  # use approximations for extreme values to avoid underflow
-  log_q[z < -100] <- z[z < -100]
-  log_q[z > 100] <- -exp(-z[z > 100])
-  
-  # apply stick-breaking transform
-  log_p <- log_q
-  for (i in 2:n_alleles) {
-    if (i == 2) {
-      log_sum_p <- log_p[,,1]
-    } else {
-      log_sum_p <- apply(log_p[,,1:(i - 1), drop = FALSE], c(1, 2), log_sum2)
-    }
-    log_stick_remaining <- log(1 - exp(log_sum_p))
-    w <- which(log_sum_p < -36)
-    log_stick_remaining[w] <- -exp(log_sum_p[w])
-    w <- which((log_sum_p < 0) & (log_sum_p > -1e-15))
-    log_stick_remaining[w] <- log(-log_sum_p[1])
-    if (i == n_alleles) {
-      log_p[,,i] <- log_stick_remaining
-    } else {
-      log_p[,,i] <- log_q[,,i] + log_stick_remaining
-    }
-  }
-  
-  return(log_p)
 }
 
 #------------------------------------------------

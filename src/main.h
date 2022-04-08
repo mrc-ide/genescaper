@@ -11,8 +11,7 @@ arma::field<arma::cube> predict_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
                                         Rcpp::List args_functions, Rcpp::List args_misc);
 
 //------------------------------------------------
-void draw_sigsq_mu(double &sigsq, double &mu, double gamma_0, double phi_0,
-                   double alpha_0, double beta_0, int n_site, arma::mat &K_11_inv,
+void draw_sigsq_mu(double &sigsq, double &mu, int n_site, arma::mat &K_11_inv,
                    arma::vec z, arma::vec ones_site);
 
 //------------------------------------------------
@@ -54,5 +53,5 @@ Rcpp::List GeoMAPI_assign_edges_cpp(Rcpp::List args, Rcpp::List args_functions, 
 //------------------------------------------------
 // [[Rcpp::export]]
 Rcpp::List post_sigsq_mu(arma::mat data, Rcpp::List mcmc_sample,
-                         arma::mat dist_11, std::vector<double> true_sigsq);
+                         arma::mat dist_11);
 
