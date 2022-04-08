@@ -50,3 +50,9 @@ arma::field<arma::cube> null_site_cpp(arma::mat data, Rcpp::List mcmc_sample,
 // [[Rcpp::export]]
 Rcpp::List GeoMAPI_assign_edges_cpp(Rcpp::List args, Rcpp::List args_functions, Rcpp::List args_progress,
                                     arma::mat dist_11);
+
+//------------------------------------------------
+// [[Rcpp::export]]
+Rcpp::List post_sigsq_mu(arma::mat data, Rcpp::List mcmc_sample,
+                         arma::mat dist_11, std::vector<double> true_sigsq);
+

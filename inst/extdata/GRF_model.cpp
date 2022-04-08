@@ -146,6 +146,15 @@ SEXP loglike(Rcpp::NumericVector params, Rcpp::List data, Rcpp::List misc) {
   double alpha_0 = 0.01;
   double beta_0 = 0.01;
   
+  // TODO - remove
+  alpha_0 = 0.0;
+  beta_0 = 0.0;
+  gamma = 0.0;
+  phi_0 = 0.0;
+  
+  // TODO - remove
+  std::vector<double> true_sigsq = Rcpp::as<vector<double>>(misc["true_sigsq"]);
+  
   // get distance matrix between all sites
   Rcpp::NumericMatrix site_dist = misc["site_dist"];
   int n_site = misc["n_site"];
@@ -185,12 +194,18 @@ SEXP loglike(Rcpp::NumericVector params, Rcpp::List data, Rcpp::List misc) {
       }
     }
     
+    // TODO - remove
+    //double v = 0.01;
+    //alpha_0 = true_sigsq[combo_i]*true_sigsq[combo_i] / v + 2.0;
+    //beta_0 = true_sigsq[combo_i] * (alpha_0 - 1.0);
+    
     double gamma_1 = gamma + K_inv_sum;
     double alpha_1 = alpha_0 + (double)n_site / 2.0;
     double phi_1 = (gamma * phi_0 + K_inv_zsum) / gamma_1;
     double beta_1 = beta_0 + 0.5*(gamma*phi_0*phi_0 - gamma_1*phi_1*phi_1 + K_inv_zsq);
     
-    ret += alpha_0*log(beta_0) - alpha_1*log(beta_1) + lgamma(alpha_1) - lgamma(alpha_0) + 0.5*log(gamma) - 0.5*log(gamma_1) - 0.5*K_logdet;
+    //ret += alpha_0*log(beta_0) - alpha_1*log(beta_1) + lgamma(alpha_1) - lgamma(alpha_0) + 0.5*log(gamma) - 0.5*log(gamma_1) - 0.5*K_logdet;
+    ret += - alpha_1*log(beta_1) - 0.5*log(gamma_1) - 0.5*K_logdet;
     
   }
   
@@ -222,7 +237,9 @@ SEXP logprior(Rcpp::NumericVector params, Rcpp::List misc) {
   // calculate logprior
   double ret = dgamma1(lambda, lambda_shape, lambda_rate, true) +
     dbeta1(nu, nu_shape1, nu_shape2, true) - log(3.0 - 1.0) - log(10.0 - 0.1);
-  //double ret = 0;
+  
+  // TODO - remove
+  //ret = 0;
   
   // add adjustment factors for transformations
   ret += log_lambda;

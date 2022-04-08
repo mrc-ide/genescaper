@@ -113,6 +113,7 @@ arma::field<arma::cube> predict_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
   // return
   return ret;
 }
+
 //------------------------------------------------
 // draw mu and sigsq (passed in by reference) from posterior
 void draw_sigsq_mu(double &sigsq, double &mu, double gamma_0, double phi_0,
@@ -123,12 +124,11 @@ void draw_sigsq_mu(double &sigsq, double &mu, double gamma_0, double phi_0,
   double alpha_1 = alpha_0 + 0.5 * (double)n_site;
   double gamma_1 = gamma_0 + arma::accu(K_11_inv);
   double phi_1 = (gamma_0 * phi_0 + arma::as_scalar(z.t() * K_11_inv * ones_site)) / gamma_1;
-  double beta_1 = beta_0 + 0.5*(gamma_0 * sq(phi_0) - gamma_1 * sq(phi_1) +  arma::as_scalar(z.t() * K_11_inv * z));
+  double beta_1 = beta_0 + 0.5*(gamma_0 * sq(phi_0) - gamma_1 * sq(phi_1) + arma::as_scalar(z.t() * K_11_inv * z));
   
   // draw mu and sigsq
   sigsq = 1.0 / rgamma1(alpha_1, beta_1);
-  mu = rnorm1(phi_1, sigsq / gamma_1);
-  
+  mu = rnorm1(phi_1, pow(sigsq / gamma_1, 0.5));
 }
 
 //------------------------------------------------
@@ -459,4 +459,77 @@ Rcpp::List GeoMAPI_assign_edges_cpp(Rcpp::List args, Rcpp::List args_functions, 
   
   // return list
   return Rcpp::List::create(Rcpp::Named("edge_assignment") = hex_edges);
+}
+
+//------------------------------------------------
+// draw sigma squared and mu from conditional posterior
+Rcpp::List post_sigsq_mu(arma::mat data, Rcpp::List mcmc_sample,
+                         arma::mat dist_11, std::vector<double> true_sigsq) {
+  
+  // get basic dimensions
+  int alleles = data.n_cols;
+  int n_site = dist_11.n_rows;
+  
+  // get posterior MCMC draws
+  vector<double> nu_draws = rcpp_to_vector_double(mcmc_sample["nu"]);
+  vector<double> lambda_draws = rcpp_to_vector_double(mcmc_sample["lambda"]);
+  vector<double> omega_draws = rcpp_to_vector_double(mcmc_sample["omega"]);
+  vector<double> gamma_draws = rcpp_to_vector_double(mcmc_sample["gamma"]);
+  int reps = nu_draws.size();
+  
+  // define fixed model parameters
+  double alpha_0 = 0.0;
+  double beta_0 = 0.0;
+  double phi_0 = 0.0;
+  
+  // initialise intermediate objects
+  arma::vec ones_site = arma::ones(n_site, 1);
+  
+  // initialise return objects
+  std::vector<std::vector<double>> sigsq(alleles, std::vector<double>(reps));
+  std::vector<std::vector<double>> mu(alleles, std::vector<double>(reps));
+  
+  // loop through MCMC draws
+  for (int rep_i = 0; rep_i < reps; ++rep_i) {
+    double nu = nu_draws[rep_i];
+    double inv_lambda = 1.0 / lambda_draws[rep_i];
+    double omega = omega_draws[rep_i];
+    double gamma = gamma_draws[rep_i];
+    
+    // TODO - remove
+    gamma = 0.0;
+    
+    // allow user to exit on escape
+    Rcpp::checkUserInterrupt();
+    
+    // initialise kernel matrices
+    arma::mat R_11 = nu * exp(-pow(dist_11 * inv_lambda, omega));
+    arma::mat W_11(n_site, n_site, arma::fill::eye);
+    W_11 = W_11 * (1 - nu);
+    arma::mat K_11 = R_11 + W_11;
+    arma::mat K_11_inv = arma::inv_sympd(K_11);
+    
+    // loop through alleles
+    for (int allele_i = 0; allele_i < alleles; ++allele_i) {
+      
+      // get data for this allele
+      arma::vec z_obs = data.col(allele_i);
+      
+      // TODO - remove
+      //double v = 0.01;
+      //alpha_0 = true_sigsq[allele_i]*true_sigsq[allele_i] / v + 2.0;
+      //beta_0 = true_sigsq[allele_i] * (alpha_0 - 1.0);
+      //print(alpha_0, beta_0);
+      
+      // draw mu and sigsq from posterior
+      draw_sigsq_mu(sigsq[allele_i][rep_i], mu[allele_i][rep_i],
+                    gamma, phi_0, alpha_0, beta_0, n_site, K_11_inv, z_obs, ones_site);
+      
+    }  // end of allele_i loop
+    
+  }  // end of rep_i loop
+  
+  // return
+  return Rcpp::List::create(Rcpp::Named("mu") = mu,
+                            Rcpp::Named("sigsq") = sigsq);
 }

@@ -141,17 +141,26 @@ transform_p_to_z <- function(genetic_data) {
   # taken into account. This creates (J - 1) ostensibly independent frequencies,
   # where J is the number of alleles. The final p_stick always equals 1 and so
   # this allele can be dropped. In other words, there are J - 1 degrees of
-  # freedom and so we are reducing from J dependent frequencies to J-1
+  # freedom and so we are reducing from J dependent frequencies to J - 1
   # independent frequencies. z values are then calculated as logit(p_stick).
+  #
+  # Some calculations are done in log space to avoid underflow issues.
   ret <- genetic_data %>%
     dplyr::group_by(.data$site_ID, .data$locus) %>%
     dplyr::summarise(J = length(.data$allele),
                      allele = .data$allele[-.data$J],
+                     freq = .data$freq[-.data$J],
                      stick_remaining = 1 - cumsum(.data$freq[-.data$J]) + .data$freq[-.data$J],
-                     p_stick = .data$freq[-.data$J] / .data$stick_remaining,
-                     z = log(.data$p_stick) - log(1 - .data$p_stick)) %>%
+                     .groups = "keep") %>%
+    dplyr::mutate(stick_remaining = ifelse(stick_remaining < 1e-10, 1e-10, stick_remaining),
+                  stick_remaining = ifelse(stick_remaining > 1 - 1e-10, 1 - 1e-10, stick_remaining)) %>%
+    #dplyr::mutate(log_p = log(.data$freq[-.data$J]))
+    dplyr::mutate(log_p = log(.data$freq[-.data$J]) - log(.data$stick_remaining),
+                  log_p = ifelse(.data$log_p > -1e-10, -1e-10, .data$log_p),
+                  log_q = log_one_minus(log_p),
+                  z = log_p - log_q) %>%
     dplyr::ungroup() %>%
-    dplyr::select(-.data$J, -.data$stick_remaining, -.data$p_stick)
+    dplyr::select(.data$site_ID, .data$locus, .data$allele, .data$z)
   
   return(ret)
 }
@@ -558,5 +567,16 @@ get_merged_poly <- function(hex_polys, d = 0.1) {
   # undo expansion
   ret <- st_buffer(ret, -d)
   
+  return(ret)
+}
+
+#------------------------------------------------
+# evaluates log(1 - exp(x)), where x is -ve. Implements special underflow-safe
+# operations for large -ve x and small -ve x
+#' @noRd
+log_one_minus <- function(x) {
+  ret <- log(1 - exp(x))
+  ret[x < -23] <- -exp(x[x < -23])
+  ret[x > -1e-10] <- log(-x[x > -1e-10])
   return(ret)
 }

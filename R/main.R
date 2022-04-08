@@ -273,7 +273,7 @@ define_model <- function(project, nu_shape1 = 1.0, nu_shape2 = 1.0, lambda_shape
 #'
 #' @export
 
-run_mcmc <- function(project, chains, ...) {
+run_mcmc <- function(project, true_sigsq, chains, ...) {
   
   # avoid "no visible binding" warning
   loglike <- NULL
@@ -302,15 +302,40 @@ run_mcmc <- function(project, chains, ...) {
   names(z_list) <- seq_along(z_list)
   
   # define parameters dataframe
-  df_params <- drjacoby::define_params(name = "nu", min = 0, max = 1, init = rep(1e-4, chains),
-                                       name = "log_lambda", min = -Inf, max = Inf, init = rep(log(mean(site_dist)), chains),
-                                       name = "omega", min = 1, max = 3.0, init = runif(chains, 1.1, 1.5),
-                                       name = "gamma", min = 0.1, max = 10, init = runif(chains, 0.2, 9))
+  param_type <- 3
+  if (param_type == 1) {
+    df_params <- drjacoby::define_params(name = "nu", min = 0, max = 1, init = rep(1e-4, chains),
+                                         name = "log_lambda", min = -Inf, max = Inf, init = rep(log(mean(site_dist)), chains),
+                                         name = "omega", min = 1, max = 3.0, init = runif(chains, 1.1, 1.5),
+                                         name = "gamma", min = 0.1, max = 10, init = runif(chains, 0.2, 9))
+  } else if (param_type == 2) {
+    nu_fix <- nu_true
+    lambda_fix <- lambda_true
+    omega_fix <- omega_true
+    gamma_fix <- gamma_true
+    df_params <- drjacoby::define_params(name = "nu", min = 0, max = 1, init = rep(nu_fix, chains),
+                                         name = "log_lambda", min = log(lambda_fix), max = log(lambda_fix), init = rep(log(lambda_fix), chains),
+                                         name = "omega", min = omega_fix, max = omega_fix, init = rep(omega_fix, chains),
+                                         name = "gamma", min = gamma_fix, max = gamma_fix, init = rep(gamma_fix, chains))
+  } else if (param_type == 3) {
+    nu_fix <- nu_true
+    lambda_fix <- lambda_true
+    omega_fix <- omega_true
+    gamma_fix <- 1.0
+    df_params <- drjacoby::define_params(name = "nu", min = 0, max = 1, init = rep(nu_fix, chains),
+                                         name = "log_lambda", min = -Inf, max = Inf, init = rep(log(lambda_fix), chains),
+                                         name = "omega", min = 1, max = 3, init = rep(omega_fix, chains),
+                                         name = "gamma", min = gamma_fix, max = gamma_fix, init = rep(gamma_fix, chains))
+  }
   
   # define misc list
   misc_list <- append(project$model$parameters,
                       list(site_dist = site_dist,
                            n_site = nrow(site_dist)))
+  
+  # TODO - remove
+  misc_list$true_sigsq <- true_sigsq
+  
   
   # source C++ likelihood and prior functions
   Rcpp::sourceCpp(system.file("extdata/GRF_model.cpp", package = 'genescaper', mustWork = TRUE))
@@ -326,10 +351,7 @@ run_mcmc <- function(project, chains, ...) {
     ll_init[i] <- loglike(params = param_vec, data = z_list, misc = misc_list)
   }
   if (any(ll_init < -1e+300)) {
-    warning("initial parameter values produce log-likelihoods outside reasonable range")
-    print(df_params)
-    print(ll_init)
-    stop()
+    stop("initial parameter values produce log-likelihoods outside reasonable range")
   }
   
   # run MCMC
@@ -1368,4 +1390,89 @@ Wombling_get_significant <- function(project, measure = "all", test_tail = "both
   }
   
   return(project)
+}
+
+
+
+#------------------------------------------------
+#' @title TODO
+#'
+#' @description TODO
+#'
+#' @param project TODO
+#' @param loci TODO
+#' @param reps TODO
+#' @param quantiles TODO
+#' @param silent TODO
+#'
+#' @export
+
+get_mu_sigsq_credible <- function(project, loci, reps = 10,
+                                  quantiles = c(0.025, 0.5, 0.975),
+                                  silent = FALSE, pb_markdown = FALSE,
+                                  true_sigsq) {
+  
+  # check inputs
+  assert_class(project, "genescaper_project")
+  assert_vector_pos_int(loci, zero_allowed = FALSE)
+  assert_single_pos_int(reps, zero_allowed = FALSE)
+  assert_vector_bounded(quantiles, inclusive_left = FALSE, inclusive_right = FALSE)
+  assert_single_logical(silent)
+  assert_single_logical(pb_markdown)
+  
+  # sample parameters from posterior
+  mcmc_sample <- project$model$MCMC$output %>%
+    dplyr::filter(.data$phase == "sampling") %>%
+    dplyr::select(.data$nu, .data$lambda, .data$omega, .data$gamma) %>%
+    dplyr::sample_n(reps) %>%
+    as.list()
+  
+  # transform frequencies to continuous scale
+  data_df <- project$data$raw$genetic_data %>%
+    dplyr::filter(.data$locus %in% loci) %>%
+    transform_p_to_z()
+  
+  # get z values split by locus and grouped into matrix by allele
+  data_list <- lapply(split(data_df, data_df$locus), function(x) {
+    tidyr::pivot_wider(x, names_from = .data$site_ID, values_from = .data$z) %>%
+      dplyr::select(-.data$locus, -.data$allele) %>%
+      as.matrix() %>% t()
+  })
+  
+  # TODO - remove
+  allele_vec <- rep(loci, times = mapply(ncol, data_list))
+  true_sigsq_list <- split(true_sigsq, f = allele_vec)
+  
+  # get distance between sampling sites
+  dist_11 <- as.matrix(project$data$pairwise_measures$distance)
+  
+  # loop through loci
+  mu_list <- sigsq_list <- list()
+  for (i in seq_along(loci)) {
+    
+    # draw from predictive distribution via efficient C++ function
+    z <- post_sigsq_mu(data_list[[i]], mcmc_sample, dist_11, true_sigsq_list[[i]])
+    
+    # get quantiles over mu
+    mu_list[[i]] <- mapply(quantile, z$mu, list(probs = quantiles)) %>% t() %>%
+      as.data.frame() %>%
+      dplyr::mutate(locus = i,
+                    allele = 1:ncol(data_list[[i]]),
+                    .before = 1)
+    
+    # get quantiles over sigsq
+    sigsq_list[[i]] <- mapply(quantile, z$sigsq, list(probs = quantiles)) %>% t() %>%
+      as.data.frame() %>%
+      dplyr::mutate(locus = i,
+                    allele = 1:ncol(data_list[[i]]),
+                    .before = 1)
+    
+  }
+  
+  # finalise outputs
+  mu_df <-  dplyr::bind_rows(mu_list)
+  sigsq_df <- dplyr::bind_rows(sigsq_list)
+  
+  return(list(mu = mu_df,
+              sigsq = sigsq_df))
 }

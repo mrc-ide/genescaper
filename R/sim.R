@@ -156,7 +156,7 @@ sim_GRF <- function(project, loci, alleles, nu, lambda, omega,
   assert_single_pos_int(alleles, zero_allowed = FALSE)
   assert_single_bounded(nu)
   assert_single_pos(lambda, zero_allowed = FALSE)
-  assert_single_bounded(omega, left = 1, right = 2)
+  assert_single_bounded(omega, left = 1, right = 3)
   assert_single_pos(sigsq_shape, zero_allowed = FALSE)
   assert_single_pos(sigsq_rate, zero_allowed = FALSE)
   assert_single_numeric(mu_mean)
@@ -179,8 +179,8 @@ sim_GRF <- function(project, loci, alleles, nu, lambda, omega,
   
   # simulate z-values all in one go
   z <- mvtnorm::rmvnorm(n_sim, sigma = K) %>%
-    sweep(1, mu, "+") %>%
-    sweep(1, sqrt(sigsq), "*")
+    sweep(1, sqrt(sigsq), "*") %>%
+    sweep(1, mu, "+")
   
   # apply transformation to each locus
   z_list <- split(as.data.frame(z), f = df_params$locus)
@@ -200,5 +200,6 @@ sim_GRF <- function(project, loci, alleles, nu, lambda, omega,
     dplyr::mutate(allele = as.numeric(as.factor(.data$allele)))
   
   return(list(data = sim_long,
-              params = df_params))
+              params = df_params,
+              z = z))
 }
