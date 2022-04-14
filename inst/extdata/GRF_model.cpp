@@ -133,12 +133,18 @@ TYPE matrix_sum(vector<vector<TYPE>> x) {
 // [[Rcpp::export]]
 SEXP loglike(Rcpp::NumericVector params, Rcpp::List data, Rcpp::List misc) {
   
-  // get model parameters
+  // get free parameters
   double nu = params["nu"];
   double log_lambda = params["log_lambda"];
   double lambda = std::exp(log_lambda);
   double inv_lambda = 1.0 / lambda;
   double omega = params["omega"];
+  
+  // get fixed parameters
+  double alpha = misc["alpha"];
+  double beta = misc["beta"];
+  double gamma = misc["gamma"];
+  double phi = misc["phi"];
   
   // get distance matrix between all sites
   Rcpp::NumericMatrix site_dist = misc["site_dist"];
@@ -180,10 +186,10 @@ SEXP loglike(Rcpp::NumericVector params, Rcpp::List data, Rcpp::List misc) {
     }
     
     // define posterior parameters
-    double gamma_1 = K_inv_sum;
-    double alpha_1 = (double)n_site / 2.0;
-    double phi_1 = K_inv_zsum / gamma_1;
-    double beta_1 = 0.5*(K_inv_zsq - gamma_1*phi_1*phi_1);
+    double alpha_1 = alpha + (double)n_site / 2.0;
+    double gamma_1 = gamma + K_inv_sum;
+    double phi_1 = (gamma*phi + K_inv_zsum) / gamma_1;
+    double beta_1 = beta + 0.5*(gamma*phi*phi - gamma_1*phi_1*phi_1 + K_inv_zsq);
     
     ret += - alpha_1*log(beta_1) - 0.5*log(gamma_1) - 0.5*K_logdet;
     

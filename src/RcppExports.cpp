@@ -83,15 +83,16 @@ BEGIN_RCPP
 END_RCPP
 }
 // post_sigsq_mu
-Rcpp::List post_sigsq_mu(arma::mat data, Rcpp::List mcmc_sample, arma::mat dist_11);
-RcppExport SEXP _genescaper_post_sigsq_mu(SEXP dataSEXP, SEXP mcmc_sampleSEXP, SEXP dist_11SEXP) {
+Rcpp::List post_sigsq_mu(arma::mat data, Rcpp::List mcmc_sample, arma::mat dist_11, Rcpp::List params);
+RcppExport SEXP _genescaper_post_sigsq_mu(SEXP dataSEXP, SEXP mcmc_sampleSEXP, SEXP dist_11SEXP, SEXP paramsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
     Rcpp::traits::input_parameter< arma::mat >::type data(dataSEXP);
     Rcpp::traits::input_parameter< Rcpp::List >::type mcmc_sample(mcmc_sampleSEXP);
     Rcpp::traits::input_parameter< arma::mat >::type dist_11(dist_11SEXP);
-    rcpp_result_gen = Rcpp::wrap(post_sigsq_mu(data, mcmc_sample, dist_11));
+    Rcpp::traits::input_parameter< Rcpp::List >::type params(paramsSEXP);
+    rcpp_result_gen = Rcpp::wrap(post_sigsq_mu(data, mcmc_sample, dist_11, params));
     return rcpp_result_gen;
 END_RCPP
 }
@@ -114,7 +115,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_genescaper_null_map_cpp", (DL_FUNC) &_genescaper_null_map_cpp, 9},
     {"_genescaper_null_site_cpp", (DL_FUNC) &_genescaper_null_site_cpp, 8},
     {"_genescaper_GeoMAPI_assign_edges_cpp", (DL_FUNC) &_genescaper_GeoMAPI_assign_edges_cpp, 4},
-    {"_genescaper_post_sigsq_mu", (DL_FUNC) &_genescaper_post_sigsq_mu, 3},
+    {"_genescaper_post_sigsq_mu", (DL_FUNC) &_genescaper_post_sigsq_mu, 4},
     {"_genescaper_sim_wrightfisher_cpp", (DL_FUNC) &_genescaper_sim_wrightfisher_cpp, 3},
     {NULL, NULL, 0}
 };

@@ -226,6 +226,10 @@ get_pairwise_D <- function(project) {
 #'
 #' @param project a genescaper project, as produced by the
 #'   \code{genescaper_project()} function.
+#' @param alpha TODO
+#' @param beta TODO
+#' @param gamma TODO
+#' @param phi TODO
 #' @param nu_shape1 TODO
 #' @param nu_shape2 TODO
 #' @param lambda_shape TODO
@@ -233,10 +237,15 @@ get_pairwise_D <- function(project) {
 #'
 #' @export
 
-define_model <- function(project, nu_shape1 = 1.0, nu_shape2 = 1.0, lambda_shape = 1.0, lambda_rate = NULL) {
+define_model <- function(project, alpha = 0, beta = 0, gamma = 0, phi = 0,
+                         nu_shape1 = 1.0, nu_shape2 = 1.0, lambda_shape = 1.0, lambda_rate = NULL) {
   
   # check inputs
   assert_class(project, "genescaper_project")
+  assert_single_pos(alpha, zero_allowed = TRUE)
+  assert_single_pos(beta, zero_allowed = TRUE)
+  assert_single_pos(gamma, zero_allowed = TRUE)
+  assert_single_numeric(phi)
   assert_single_pos(nu_shape1, zero_allowed = FALSE)
   assert_single_pos(nu_shape2, zero_allowed = FALSE)
   assert_single_pos(lambda_shape, zero_allowed = FALSE)
@@ -248,11 +257,15 @@ define_model <- function(project, nu_shape1 = 1.0, nu_shape2 = 1.0, lambda_shape
   # in data
   if (is.null(lambda_rate)) {
     max_dist <- max(project$data$pairwise_measures$distance)
-    lambda_rate <- lambda_shape / (max_dist / 2)
+    lambda_rate <- lambda_shape / (0.5 * max_dist)
   }
   
   # store within project
-  project$model$parameters <- list(nu_shape1 = nu_shape1,
+  project$model$parameters <- list(alpha = alpha,
+                                   beta = beta,
+                                   gamma = gamma,
+                                   phi = phi,
+                                   nu_shape1 = nu_shape1,
                                    nu_shape2 = nu_shape2,
                                    lambda_shape = lambda_shape,
                                    lambda_rate = lambda_rate)
@@ -1420,7 +1433,7 @@ get_mu_sigsq_credible <- function(project, loci, reps = 10,
   for (i in seq_along(loci)) {
     
     # draw from predictive distribution via efficient C++ function
-    z <- post_sigsq_mu(data_list[[i]], mcmc_sample, dist_11)
+    z <- post_sigsq_mu(data_list[[i]], mcmc_sample, dist_11, project$model$parameters)
     
     # get quantiles over mu
     mu_list[[i]] <- mapply(quantile, z$mu, list(probs = quantiles)) %>% t() %>%

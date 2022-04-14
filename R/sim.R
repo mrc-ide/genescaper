@@ -178,7 +178,7 @@ sim_GRF <- function(project, loci, alleles, nu, lambda, omega,
                           sigsq = sigsq)
   
   # simulate z-values all in one go
-  z <- mvtnorm::rmvnorm(n_sim, sigma = K) %>%
+  z <- mvtnorm::rmvnorm(n_sim, sigma = K, method = "svd") %>%
     sweep(1, sqrt(sigsq), "*") %>%
     sweep(1, mu, "+")
   

@@ -17,8 +17,8 @@ GeoMAPI_assign_edges_cpp <- function(args, args_functions, args_progress, dist_1
     .Call(`_genescaper_GeoMAPI_assign_edges_cpp`, args, args_functions, args_progress, dist_11)
 }
 
-post_sigsq_mu <- function(data, mcmc_sample, dist_11) {
-    .Call(`_genescaper_post_sigsq_mu`, data, mcmc_sample, dist_11)
+post_sigsq_mu <- function(data, mcmc_sample, dist_11, params) {
+    .Call(`_genescaper_post_sigsq_mu`, data, mcmc_sample, dist_11, params)
 }
 
 sim_wrightfisher_cpp <- function(args, args_functions, args_progress) {

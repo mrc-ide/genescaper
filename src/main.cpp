@@ -21,6 +21,12 @@ arma::field<arma::cube> predict_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
   bool silent = rcpp_to_bool(args_misc["silent"]);
   bool pb_markdown = rcpp_to_bool(args_misc["pb_markdown"]);
   
+  // get fixed model parameters
+  double alpha = rcpp_to_double(params["alpha"]);
+  double beta = rcpp_to_double(params["beta"]);
+  double gamma = rcpp_to_double(params["gamma"]);
+  double phi = rcpp_to_double(params["phi"]);
+  
   // get basic dimensions
   int alleles = data.n_cols;
   int n_site = dist_11.n_rows;
@@ -77,7 +83,7 @@ arma::field<arma::cube> predict_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
       
       // draw mu and sigsq from posterior
       double sigsq, mu;
-      draw_sigsq_mu(sigsq, mu, n_site, K_11_inv, z_obs, ones_site);
+      draw_sigsq_mu(sigsq, mu, alpha, beta, gamma, phi, n_site, K_11_inv, z_obs, ones_site);
       
       // draw y from posterior
       draw_y_post(y, sigsq, mu, R_11_inv, W_11_inv, ones_site, z_obs, nu);
@@ -108,14 +114,15 @@ arma::field<arma::cube> predict_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
 
 //------------------------------------------------
 // draw mu and sigsq (passed in by reference) from posterior
-void draw_sigsq_mu(double &sigsq, double &mu, int n_site, arma::mat &K_11_inv,
+void draw_sigsq_mu(double &sigsq, double &mu, double alpha, double beta, double gamma,
+                   double phi, int n_site, arma::mat &K_11_inv,
                    arma::vec z, arma::vec ones_site) {
   
   // calculate posterior parameters
-  double alpha_1 = 0.5 * (double)n_site;
-  double gamma_1 = arma::accu(K_11_inv);
-  double phi_1 = arma::as_scalar(z.t() * K_11_inv * ones_site) / gamma_1;
-  double beta_1 = 0.5*(arma::as_scalar(z.t() * K_11_inv * z) - gamma_1 * sq(phi_1));
+  double alpha_1 = alpha + 0.5 * (double)n_site;
+  double gamma_1 = gamma + arma::accu(K_11_inv);
+  double phi_1 = (gamma*phi + arma::as_scalar(z.t() * K_11_inv * ones_site)) / gamma_1;
+  double beta_1 = beta + 0.5*(gamma * sq(phi) - gamma_1 * sq(phi_1) + arma::as_scalar(z.t() * K_11_inv * z));
   
   // draw mu and sigsq
   sigsq = 1.0 / rgamma1(alpha_1, beta_1);
@@ -193,6 +200,12 @@ arma::field<arma::cube> null_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
   bool silent = rcpp_to_bool(args_misc["silent"]);
   bool pb_markdown = rcpp_to_bool(args_misc["pb_markdown"]);
   
+  // get fixed model parameters
+  double alpha = rcpp_to_double(params["alpha"]);
+  double beta = rcpp_to_double(params["beta"]);
+  double gamma = rcpp_to_double(params["gamma"]);
+  double phi = rcpp_to_double(params["phi"]);
+  
   // get basic dimensions
   int alleles = data.n_cols;
   int n_site = dist_11.n_rows;
@@ -245,7 +258,7 @@ arma::field<arma::cube> null_map_cpp(arma::mat data, Rcpp::List mcmc_sample,
       
       // draw mu and sigsq from posterior
       double sigsq, mu;
-      draw_sigsq_mu(sigsq, mu, n_site, K_11_inv, z_obs, ones_site);
+      draw_sigsq_mu(sigsq, mu, alpha, beta, gamma, phi, n_site, K_11_inv, z_obs, ones_site);
       
       // draw z from null distribution
       draw_z_null(z_cube.slice(allele_i), K_22, mu, sigsq, ones_pred, inner_reps);
@@ -294,6 +307,12 @@ arma::field<arma::cube> null_site_cpp(arma::mat data, Rcpp::List mcmc_sample,
   bool silent = rcpp_to_bool(args_misc["silent"]);
   bool pb_markdown = rcpp_to_bool(args_misc["pb_markdown"]);
   
+  // get fixed model parameters
+  double alpha = rcpp_to_double(params["alpha"]);
+  double beta = rcpp_to_double(params["beta"]);
+  double gamma = rcpp_to_double(params["gamma"]);
+  double phi = rcpp_to_double(params["phi"]);
+  
   // get basic dimensions
   int alleles = data.n_cols;
   int n_site = dist_11.n_rows;
@@ -340,7 +359,7 @@ arma::field<arma::cube> null_site_cpp(arma::mat data, Rcpp::List mcmc_sample,
       
       // draw mu and sigsq from posterior
       double sigsq, mu;
-      draw_sigsq_mu(sigsq, mu, n_site, K_11_inv, z_obs, ones_site);
+      draw_sigsq_mu(sigsq, mu, alpha, beta, gamma, phi, n_site, K_11_inv, z_obs, ones_site);
       
       // draw z from null distribution
       draw_z_null(z_cube.slice(allele_i), K_11, mu, sigsq, ones_site, inner_reps);
@@ -440,7 +459,13 @@ Rcpp::List GeoMAPI_assign_edges_cpp(Rcpp::List args, Rcpp::List args_functions, 
 //------------------------------------------------
 // draw sigma squared and mu from conditional posterior
 Rcpp::List post_sigsq_mu(arma::mat data, Rcpp::List mcmc_sample,
-                         arma::mat dist_11) {
+                         arma::mat dist_11, Rcpp::List params) {
+  
+  // get fixed model parameters
+  double alpha = rcpp_to_double(params["alpha"]);
+  double beta = rcpp_to_double(params["beta"]);
+  double gamma = rcpp_to_double(params["gamma"]);
+  double phi = rcpp_to_double(params["phi"]);
   
   // get basic dimensions
   int alleles = data.n_cols;
@@ -483,7 +508,7 @@ Rcpp::List post_sigsq_mu(arma::mat data, Rcpp::List mcmc_sample,
       
       // draw mu and sigsq from posterior
       draw_sigsq_mu(sigsq[allele_i][rep_i], mu[allele_i][rep_i],
-                    n_site, K_11_inv, z_obs, ones_site);
+                    alpha, beta, gamma, phi, n_site, K_11_inv, z_obs, ones_site);
       
     }  // end of allele_i loop
     

@@ -202,38 +202,3 @@ Rcpp::List sim_wrightfisher_cpp(Rcpp::List args, Rcpp::List args_functions, Rcpp
   return ret;
 }
 
-//------------------------------------------------
-// apply box blur to matrix
-Rcpp::NumericMatrix box_blur_cpp(Rcpp::NumericMatrix m, int d) {
-  
-  // initialise return matrix
-  Rcpp::NumericMatrix ret(m.nrow(), m.ncol());
-  int nr = ret.nrow();
-  int nc = ret.ncol();
-  
-  // apply box blur to ret matrix
-  for (int i = 0; i < nr; ++i) {
-    for (int j = 0; j < nc; ++j) {
-      
-      // get limits of box
-      int i_min = (i-d > 1) ? i-d : 1;
-      int i_max = (i+d < nr) ? i+d : nr;
-      int j_min = (j-d > 1) ? j-d : 1;
-      int j_max = (j+d < nc) ? j+d : nc;
-      
-      // sum values within box
-      double v = 0;
-      for (int a = i_min; a < i_max; ++a) {
-        for (int b = j_min; b < j_max; ++b) {
-          v += m(a,b);
-        }
-      }
-      
-      // store mean value
-      v /= double((i_max - i_min)*(j_max - j_min));
-      ret(i,j) = v;
-    }
-  }
-  
-  return ret;
-}
