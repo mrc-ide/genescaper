@@ -496,7 +496,7 @@ predict_map <- function(project, loci, reps = 2, inner_reps = 10,
   })
   
   # get distance between sampling sites
-  dist_11 <- as.matrix(project$data$pairwise_measures$distance)
+  dist_11 <- project$data$pairwise_measures$distance
   
   # get distance between prediction sites
   grid_coords <- project$maps$grid$centroids
@@ -679,7 +679,7 @@ stat_sim <- function(project, reps, inner_reps, silent, pb_markdown) {
   alleles <- mapply(ncol, data_list)
   
   # get distance between sampling sites
-  dist_11 <- as.matrix(project$data$pairwise_measures$distance)
+  dist_11 <- project$data$pairwise_measures$distance
   
   # create function list
   args_functions <- list(update_progress = update_progress)
@@ -767,7 +767,7 @@ GeoMAPI_assign_edges <- function(project,
   assert_single_logical(pb_markdown)
   
   # get distance between sampling sites
-  dist_11 <- as.matrix(project$data$pairwise_measures$distance)
+  dist_11 <- project$data$pairwise_measures$distance
   
   # deal with infinite max_dist
   if (!is.finite(max_dist)) {
@@ -851,7 +851,7 @@ GeoMAPI_suggest_eccentricity <- function(project,
   assert_single_logical(pb_markdown)
   
   # get distance between sampling sites
-  dist_11 <- as.matrix(project$data$pairwise_measures$distance)
+  dist_11 <- project$data$pairwise_measures$distance
   
   # get largest and smallest distance between sampling sites
   d_vec <- dist_11[upper.tri(dist_11)]
@@ -908,7 +908,7 @@ GeoMAPI_suggest_eccentricity <- function(project,
                    "\n - increasing the target_proportion (greater number of reliable cells)",
                    "\n - increasing the target_coverage (more stringent requirement of cells)",
                    "\n - increasing the resolution of the grid (sharper resolution)",
-                   "\n - setting the eccentricity manually"))
+                   "\n - setting the eccentricity manually, rather than going via this function"))
     return(1.0)
   }
   
@@ -958,6 +958,110 @@ GeoMAPI_suggest_eccentricity <- function(project,
   }
   
   return(ecc_prop)
+}
+
+#------------------------------------------------
+#' @title Suggest max_dist parameter based on target coverage
+#'
+#' @description TODO
+#'
+#' @details TODO
+#' 
+#' @param project a genescaper project, as produced by the
+#'   \code{genescaper_project()} function.
+#' @param target_coverage,target_proportion eccentricity will be chosen such
+#'   that a proportion \code{target_proportion} of cells achieve a coverage of
+#'   at least \code{target_coverage}.
+#' @param n_iterations the number of iterations to run of the binary search
+#'   method.
+#' @param eccentricity eccentricity of ellipses, defined as half the distance
+#'   between foci divided by the semi-major axis. \eqn{e = sqrt{1 - b^2/a^2}},
+#'   where \eqn{e} is the eccentricity, \eqn{a} is the length of the semi-major
+#'   axis, and \eqn{b} is the length of the semi-minor axis. Eccentricity ranges
+#'   between 0 (perfect circle) and 1 (straight line between foci). An
+#'   eccentricity of 0 is not allowed in this case because it would result in an
+#'   infinitely large circle.
+#' @param silent if \code{TRUE} then no output is produced during function
+#'   evaluation.
+#' @param pb_markdown whether to run progress bars in markdown mode, in which
+#'   case they are updated once at the end to avoid large amounts of output.
+#'
+#' @export
+
+GeoMAPI_suggest_max_dist <- function(project,
+                                     target_coverage = 10,
+                                     target_proportion = 0.9,
+                                     n_iterations = 30,
+                                     eccentricity = 0.9,
+                                     silent = FALSE,
+                                     pb_markdown = FALSE) {
+  
+  # check inputs
+  assert_class(project, "genescaper_project")
+  assert_single_pos_int(target_coverage, zero_allowed = FALSE)
+  assert_single_bounded(target_proportion, inclusive_left = TRUE, inclusive_right = TRUE)
+  assert_single_pos_int(n_iterations, zero_allowed = FALSE)
+  assert_single_bounded(eccentricity, inclusive_left = FALSE, inclusive_right = TRUE)
+  assert_single_logical(silent)
+  assert_single_logical(pb_markdown)
+  
+  # get assignment list for infinite distance
+  tmp_proj <- GeoMAPI_assign_edges(project, eccentricity = eccentricity, max_dist = Inf,
+                                   silent = TRUE)
+  ass <- tmp_proj$GeoMAPI$edge_assignment 
+  
+  # get distance between sampling sites
+  dist_11 <- project$data$pairwise_measures$distance
+  d_vec <- dist_11[lower.tri(dist_11)]
+  
+  # get distance for each assigned edge
+  dist_ass <- mapply(function(x) d_vec[x], ass, SIMPLIFY = FALSE)
+  
+  # set starting distance bounds in search
+  d_left <- min(d_vec)
+  d_right <- max(d_vec)
+  d_best <- Inf
+  prop_best <- 1
+  
+  # create progress bar
+  pb_search <- txtProgressBar(0, n_iterations, initial = NA, style = 3)
+  
+  # perform search
+  message("Running binary search")
+  for (i in 1:n_iterations) {
+    
+    # calculate next search value
+    d_prop <- (d_left + d_right) / 2
+    
+    # calculate coverage
+    coverage <- mapply(function(x) sum(x <= d_prop), dist_ass)
+    
+    # get proportion good coverage
+    actual_proportion <- mean(coverage >= target_coverage)
+    
+    # calculate next search bounds
+    if (actual_proportion > target_proportion) {
+      d_right <- d_prop
+      d_best <- d_prop
+      prop_best <- actual_proportion
+    } else {
+      d_left <- d_prop
+    }
+    
+    # update progress bar
+    if (!silent) {
+      update_progress(list(pb = pb_search), "pb", i, n_iterations)
+    }
+    
+  }
+  
+  # report result
+  if (!silent) {
+    message(sprintf("max_dist of %s means that %s%% of cells achieve a coverage of %s or higher",
+                    signif(d_best, 3), signif(prop_best * 100), target_coverage))
+  }
+  
+  return(d_best)
 }
 
 #------------------------------------------------
@@ -1181,7 +1285,7 @@ Wombling <- function(project, loci = NULL, reps = 2, inner_reps = 10,
   total_reps <- reps * inner_reps
   
   # get distance between sampling sites
-  dist_11 <- as.matrix(project$data$pairwise_measures$distance)
+  dist_11 <- project$data$pairwise_measures$distance
   
   # get distance between prediction sites
   grid_coords <- project$maps$grid$centroids
@@ -1426,7 +1530,7 @@ get_mu_sigsq_credible <- function(project, loci, reps = 10,
   })
   
   # get distance between sampling sites
-  dist_11 <- as.matrix(project$data$pairwise_measures$distance)
+  dist_11 <- project$data$pairwise_measures$distance
   
   # loop through loci
   mu_list <- sigsq_list <- list()
