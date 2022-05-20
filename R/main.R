@@ -268,12 +268,13 @@ define_model <- function(project, nu_shape1 = 1.0, nu_shape2 = 1.0, lambda_shape
 #' @param project a genescaper project, as produced by the
 #'   \code{genescaper_project()} function.
 #' @param chains TODO
+#' @param init_list TODO
 #' @param ... additional parameters that will be passed to
 #'   \code{drjacoby::run_mcmc()}.
 #'
 #' @export
 
-run_mcmc <- function(project, chains, ...) {
+run_mcmc <- function(project, chains = 1, init_list = NULL, ...) {
   
   # avoid "no visible binding" warning
   loglike <- NULL
@@ -281,6 +282,15 @@ run_mcmc <- function(project, chains, ...) {
   # check inputs
   assert_class(project, "genescaper_project")
   assert_single_pos_int(chains, zero_allowed = FALSE)
+  if (!is.null(init_list)) {
+    assert_list(init_list)
+    assert_length(init_list, 3)
+    assert_eq(all(mapply(assert_length, init_list, n = chains)), TRUE,
+              message = sprintf("all init_list elements must have one element per chain (%s).", chains))
+    assert_bounded(init_list[[1]])
+    assert_pos(init_list[[2]])
+    assert_bounded(init_list[[3]], left = 1, right = 3)
+  }
   
   # check that both data and model have been defined
   assert_non_null(project$dat$raw)
@@ -301,11 +311,6 @@ run_mcmc <- function(project, chains, ...) {
     lapply(function (x) x$z)
   names(z_list) <- seq_along(z_list)
   
-  # define parameters dataframe
-  df_params <- drjacoby::define_params(name = "nu", min = 0, max = 1, init = rep(1e-4, chains),
-                                       name = "log_lambda", min = -Inf, max = Inf, init = rep(log(mean(site_dist)), chains),
-                                       name = "omega", min = 1, max = 3.0, init = runif(chains, 1.1, 1.5))
-  
   # define misc list
   misc_list <- append(project$model$parameters,
                       list(site_dist = site_dist,
@@ -314,17 +319,48 @@ run_mcmc <- function(project, chains, ...) {
   # source C++ likelihood and prior functions
   Rcpp::sourceCpp(system.file("extdata/GRF_model.cpp", package = 'genescaper', mustWork = TRUE))
   
-  # check that all initial values create valid likelihoods
-  ll_init <- rep(NA, chains)
-  for (i in 1:chains) {
-    param_vec <- c("nu" = df_params$init[[1]][i],
-                   "log_lambda" = df_params$init[[2]][i],
-                   "omega" = df_params$init[[3]][i])
-    
-    ll_init[i] <- loglike(params = param_vec, data = z_list, misc = misc_list)
+  # initialise parameters dataframe
+  df_params <- drjacoby::define_params(name = "nu", min = 0, max = 1,
+                                       name = "log_lambda", min = -Inf, max = Inf,
+                                       name = "omega", min = 1, max = 3.0)
+  
+  
+  # if init_list is defined then use these as initial values, and check valid
+  if (!is.null(init_list)) {
+    df_params$init <- init_list
+    for (i in 1:chains) {
+      param_vec <- c("nu" = df_params$init[[1]][i],
+                     "log_lambda" = df_params$init[[2]][i],
+                     "omega" = df_params$init[[3]][i])
+      ll_init <- loglike(params = param_vec, data = z_list, misc = misc_list)
+      if (ll_init <= -1e+300) {
+        stop("init_list contains parameter values that produce log-likelihoods greater than -1e300.")
+      }
+    }
   }
-  if (any(ll_init < -1e+300)) {
-    stop("initial parameter values produce log-likelihoods outside reasonable range")
+  
+  # if init_list is not defined then attempt to find valid random starting
+  # values for each chain
+  if (is.null(init_list)) {
+    df_params$init <- replicate(3, rep(NA, chains), simplify = FALSE)
+    for (i in 1:chains) {
+      for (j in 1:100) {
+        param_vec <- c("nu" = runif(1),
+                       "log_lambda" = log(mean(site_dist)),
+                       "omega" = runif(1, 1.1, 1.5))
+        ll_init <- loglike(params = param_vec, data = z_list, misc = misc_list)
+        if (ll_init > -1e+300) {
+          break
+        }
+      }
+      if (ll_init <= -1e+300) {
+        stop(paste0("could not find initial parameter values that produce log-likelihoods greater than -1e300. ",
+                    "Try setting initial values manually with init_list argument."))
+      }
+      df_params$init[[1]][i] <- param_vec[1]
+      df_params$init[[2]][i] <- param_vec[2]
+      df_params$init[[3]][i] <- param_vec[3]
+    }
   }
   
   # run MCMC
