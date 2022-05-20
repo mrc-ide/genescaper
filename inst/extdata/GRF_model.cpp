@@ -186,11 +186,14 @@ SEXP loglike(Rcpp::NumericVector params, Rcpp::List data, Rcpp::List misc) {
     double beta_1 = 0.5*(K_inv_zsq - gamma_1*phi_1*phi_1);
     
     ret += - alpha_1*log(beta_1) - 0.5*log(gamma_1) - 0.5*K_logdet;
-    
   }
   
-  // catch non-finite return value and replace with arbitrary small value
-  if (isnan(ret)) {
+  // catch non-finite return value and replace with arbitrary small value (in
+  // log space). NB, this can happen because objects like e.g. beta_1 can end up
+  // 0 or negative due to underflow, resulting in log() returning inf or nan
+  // values. By fixing at arbitrary small value we prevent MCMC from exploring
+  // these areas without terminating and throwing error
+  if (isnan(ret) || !isfinite(ret)) {
     ret = -DBL_MAX / 100;
   }
   
